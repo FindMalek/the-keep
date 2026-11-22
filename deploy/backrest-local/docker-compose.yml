@@ -1,0 +1,40 @@
+# Dokploy: project "Infrastructure" → compose "backrest-local" (source: Raw).
+# Web UI for restic backups to the local 2TB HDD (issue #69). Tailnet only:
+# backup.findmalek.engineer. Separate instance from deploy/backrest (that one
+# is the cloud copy and deliberately excludes /srv/docker to save cloud
+# storage cost; this one is local-only and has room to include it).
+#
+# First-time setup:
+# 1. Deploy this compose.
+# 2. Open https://backup.findmalek.engineer and add a plan:
+#    - paths: /srv (all docker volumes, Seafile, Ente, Vaultwarden, app configs)
+#    - exclude: /srv/backup-hdd (the repo's own destination), /srv/music (re-buyable)
+#    - repo: local:/repo
+#    - repo password: generated on the host, see
+#      /srv/backup-hdd/backrest-data/.repo-password -- copy it into Vaultwarden
+#      and delete the file once saved there.
+#    - schedule: nightly, retention 7 daily / 4 weekly / 3 monthly (HDD is 1.8TB,
+#      no need to be as stingy with retention as the B2 plan)
+# 3. HDD SMART health is checked weekly by keep-smart.timer already (dashboard).
+services:
+  backrest-local:
+    image: garethgeorge/backrest:latest
+    restart: unless-stopped
+    environment:
+      BACKREST_DATA: /data
+      BACKREST_CONFIG: /data/config/config.json
+    volumes:
+      - /srv/backup-hdd/backrest-data:/data
+      - /srv/backup-hdd/restic-repo:/repo
+      - /srv:/srv:ro
+    labels:
+      keep.project: infrastructure
+      keep.domains: backup.findmalek.engineer
+    networks:
+      dokploy-network:
+        aliases:
+          - backrest-local
+
+networks:
+  dokploy-network:
+    external: true
