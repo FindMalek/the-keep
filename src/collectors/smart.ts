@@ -1,8 +1,7 @@
 import { readFileSync } from "node:fs";
 import type { SmartStats } from "../shared/types";
-import { HOST_ETC } from "../lib/host";
 
-const PATH = `${HOST_ETC}/keep-dashboard/smart.json`;
+const PATH = `${process.env.DATA_DIR ?? "/data"}/smart.json`;
 
 export function smart(): SmartStats {
   try {
