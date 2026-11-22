@@ -1,0 +1,9 @@
+[Unit]
+Description=Measure disk use every 29 minutes
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=29min
+
+[Install]
+WantedBy=timers.target

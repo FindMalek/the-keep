@@ -1,9 +1,9 @@
 [Unit]
-Description=Refresh job status every minute
+Description=Refresh job status every 2 minutes
 
 [Timer]
 OnBootSec=30s
-OnUnitActiveSec=1min
+OnUnitActiveSec=2min
 
 [Install]
 WantedBy=timers.target
