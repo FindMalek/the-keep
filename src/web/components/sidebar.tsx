@@ -44,6 +44,12 @@ export const ICONS = {
       <rect x="9.5" y="0.5" width="2" height="11" />
     </svg>
   ),
+  sessions: (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <rect x="0.5" y="0.5" width="11" height="8" />
+      <path d="M3 3.5h6M3 6h4M2.5 11.5l2-3" />
+    </svg>
+  ),
   apps: (
     <svg viewBox="0 0 12 12" aria-hidden="true">
       <rect x="0.5" y="0.5" width="11" height="3" />

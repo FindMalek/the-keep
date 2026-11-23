@@ -16,6 +16,9 @@ import { collectHost, publicIp, resolveIp } from "./collectors/system";
 import { createAppsCollector } from "./collectors/apps";
 import { collectJobs, collectUsage, requestAction } from "./collectors/jobs";
 import { recordAiUsage } from "./collectors/ai-usage";
+import { SessionStore } from "./sessions/store";
+import { toHandoffMarkdown } from "./sessions/export";
+import { isParsedSession } from "./sessions/validate";
 import { createKumaCollector } from "./collectors/kuma";
 import { createHomeCollector } from "./collectors/home";
 import { ViewerLog } from "./lib/viewers";
@@ -194,6 +197,8 @@ async function tick(): Promise<void> {
 
 every(SECOND, tick);
 
+const sessionStore = new SessionStore(config.dataDir);
+
 const server = Bun.serve({
   port: config.port,
   development: process.env.NODE_ENV !== "production",
@@ -203,6 +208,7 @@ const server = Bun.serve({
     "/system": index,
     "/jobs": index,
     "/activity": index,
+    "/sessions": index,
     "/uptime": index,
     "/api/actions": {
       POST: async (request: Request) => {
@@ -215,6 +221,23 @@ const server = Bun.serve({
         setTimeout(async () => (slow.jobs = await collectJobs(config.dataDir)), 3000);
         return new Response(null, { status: 202 });
       },
+    },
+    "/api/sessions": {
+      GET: () => Response.json({ sessions: sessionStore.list(200), usage: sessionStore.usageByDay(Date.now() - 90 * 86_400_000) }),
+      POST: async (request: Request) => {
+        if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
+        const body = await request.json().catch(() => null);
+        const batch = Array.isArray(body) ? body : [body];
+        if (!batch.length || !batch.every(isParsedSession)) return new Response("bad payload", { status: 400 });
+        for (const parsed of batch) sessionStore.upsert(parsed);
+        return new Response(null, { status: 202 });
+      },
+    },
+    "/api/session": (request: Request) => {
+      const params = new URL(request.url).searchParams;
+      const parsed = sessionStore.get(params.get("id") ?? "");
+      if (!parsed) return new Response("not found", { status: 404 });
+      return params.get("as") === "markdown" ? new Response(toHandoffMarkdown(parsed), { headers: { "content-type": "text/markdown; charset=utf-8" } }) : Response.json(parsed);
     },
     "/api/ai-usage": {
       POST: async (request: Request) => {
