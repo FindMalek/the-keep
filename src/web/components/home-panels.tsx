@@ -29,10 +29,10 @@ export function MusicPanel({ music, link }: { music: MusicStats; link: string | 
       ) : (
         <>
           <div className="headline">
-            <span className="big">{count(music.albums)}</span>
+            <span className="big">{count(music.songs)}</span>
             <dl className="facts">
+              <div><dt>tracks</dt><dd>{count(music.songs)}</dd></div>
               <div><dt>albums</dt><dd>{count(music.albums)}</dd></div>
-              <div><dt>songs</dt><dd>{count(music.songs)}</dd></div>
               <div><dt>artists</dt><dd>{count(music.artists)}</dd></div>
             </dl>
           </div>
@@ -42,11 +42,13 @@ export function MusicPanel({ music, link }: { music: MusicStats; link: string | 
           ) : (
             <ul className="list compact">
               {music.nowPlaying.map((entry) => (
-                <li key={`${entry.user}-${entry.title}`}>
-                  <span className="ellipsis">
-                    <Chip tone="solid">live</Chip> {entry.title} <span className="muted">· {entry.artist}</span>
+                <li key={`${entry.user}-${entry.title}`} title={`${entry.title} · ${entry.artist} · ${entry.album}`}>
+                  <span className="track">
+                    <Chip tone="solid">live</Chip>
+                    <span className="track-title ellipsis">{entry.title}</span>
+                    <span className="track-artist muted ellipsis">· {entry.artist}</span>
                   </span>
-                  <span className="muted small">{entry.user} · {entry.player}</span>
+                  <span className="track-who muted small ellipsis">{entry.user} · {entry.player}</span>
                 </li>
               ))}
             </ul>
@@ -54,9 +56,10 @@ export function MusicPanel({ music, link }: { music: MusicStats; link: string | 
           <h3 className="subhead">recently added</h3>
           <ul className="list compact">
             {music.recentlyAdded.map((album) => (
-              <li key={`${album.artist}-${album.album}`}>
-                <span className="ellipsis">
-                  {album.album} <span className="muted">· {album.artist}</span>
+              <li key={`${album.artist}-${album.album}`} title={`${album.album} · ${album.artist}`}>
+                <span className="track">
+                  <span className="track-title ellipsis">{album.album}</span>
+                  <span className="track-artist muted ellipsis">· {album.artist}</span>
                 </span>
                 <span className="num muted">{album.year ?? ""}</span>
               </li>
