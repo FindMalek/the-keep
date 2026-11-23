@@ -8,6 +8,7 @@ import { ActivityPage } from "./pages/activity-page";
 import { AppsPage } from "./pages/apps-page";
 import { JobsPage } from "./pages/jobs-page";
 import { OverviewPage } from "./pages/overview-page";
+import { SessionsPage } from "./pages/sessions-page";
 import { SystemPage } from "./pages/system-page";
 import { UptimePage } from "./pages/uptime-page";
 
@@ -25,6 +26,7 @@ export function App() {
     { path: "/apps", label: "apps", icon: ICONS.apps, alerts: unhealthyApps },
     { path: "/jobs", label: "jobs", icon: ICONS.jobs, alerts: failedJobs },
     { path: "/activity", label: "activity", icon: ICONS.activity },
+    { path: "/sessions", label: "sessions", icon: ICONS.sessions },
   ];
 
   return (
@@ -47,6 +49,8 @@ export function App() {
             <UptimePage uptime={snapshot.uptime} kumaUrl={snapshot.links.kuma} />
           ) : path === "/activity" ? (
             <ActivityPage />
+          ) : path === "/sessions" ? (
+            <SessionsPage />
           ) : (
             <OverviewPage snapshot={snapshot} history={history} />
           )}

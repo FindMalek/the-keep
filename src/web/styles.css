@@ -1419,3 +1419,46 @@ a.button {
     grid-template-columns: repeat(2, minmax(0, 1fr));
   }
 }
+
+/* Sessions page. */
+
+.grid.sessions {
+  grid-template-columns: minmax(0, 1fr);
+  grid-template-areas: "usage" "list";
+}
+
+.session-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 8px;
+}
+
+.session-messages {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+
+.session-message {
+  border: 1px solid var(--border);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.session-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  font-size: 12px;
+}
+
+.session-text {
+  margin: 6px 0 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  font: inherit;
+  font-size: 13px;
+}
