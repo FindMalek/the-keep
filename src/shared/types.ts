@@ -301,7 +301,7 @@ export interface TickPayload {
   points: Points;
 }
 
-export type RangeName = "live" | "1h" | "24h" | "7d" | "30d";
+export type RangeName = "live" | "1h" | "24h" | "7d" | "30d" | "90d" | "1y";
 
 export interface RangeSeries {
   avg: (number | null)[];
