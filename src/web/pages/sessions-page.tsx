@@ -91,7 +91,7 @@ function List({ sessions }: { sessions: SessionRow[] }) {
             <th>session</th>
             <th className="hide-narrow">tool</th>
             <th className="hide-narrow">machine</th>
-            <th className="right">msgs</th>
+            <th className="right hide-narrow">msgs</th>
             <th className="right">tokens</th>
             <th className="right">cost</th>
           </tr>
@@ -108,7 +108,7 @@ function List({ sessions }: { sessions: SessionRow[] }) {
               </td>
               <td className="hide-narrow">{s.tool}</td>
               <td className="hide-narrow muted">{s.machine}</td>
-              <td className="num right">{s.messageCount}</td>
+              <td className="num right hide-narrow">{s.messageCount}</td>
               <td className="num right">{compact(s.tokensIn + s.tokensOut)}</td>
               <td className="num right">{usd(s.costUsd)}</td>
             </tr>
