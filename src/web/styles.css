@@ -1497,3 +1497,31 @@ a.button {
     overflow-wrap: anywhere;
   }
 }
+
+/* A track or album line: the title shrinks first (to at most 65%) so the artist stays visible. */
+
+.track {
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  min-width: 0;
+}
+
+.track-title {
+  flex: 0 1 auto;
+  max-width: 65%;
+}
+
+.track-artist {
+  flex: 1 1 0;
+}
+
+.track-who {
+  max-width: 40%;
+}
+
+@media (max-width: 720px) {
+  .track-who {
+    display: none;
+  }
+}
