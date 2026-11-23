@@ -18,8 +18,8 @@ CPU to containers, uptime to ad blocking, jobs you can run and a log of who logg
 
 | Page | |
 |---|---|
-| **overview** | Eight tiles (cpu, memory, data disk, temperature, network, sites up, ads blocked, internet speed), then music, ad blocking, internet and reading panels, space per app against its limit, and your public sites. |
-| **system** | CPU per core with clock and load, memory, network per interface, volumes and disks (read/write, iops, busy, temperature), every temperature sensor, every container with CPU and memory. Graphs for live / 1 h / 24 h / 7 d / 30 d. |
+| **home** | Eight tiles (cpu, memory, data disk, temperature, network, sites up, ads blocked, internet speed), then cpu per core with clock and load, memory, network per interface, internet speed and ad blocking, volumes and disks, disk health, every temperature sensor, space per app against its limit, your public sites and every container. Graphs for live / 1 h / 24 h / 7 d / 30 d. `/system` and `/overview` redirect here. |
+| **media** | Music from Navidrome (tracks, albums, now playing, recently added) and the reading list from Miniflux. |
 | **uptime** | Every Uptime Kuma check: status, a 24-hour strip of half-hour bars, response time, 24 h and 30 d uptime, days left on the TLS certificate. |
 | **apps** | Every Dokploy project and service: containers, CPU, memory, domains, last deploy, plus a structured log of what the nightly cleanup removed. |
 | **jobs** | Scheduled host jobs with last result and next run, a *run now* button for each, and *tidy* / *reboot* buttons. |

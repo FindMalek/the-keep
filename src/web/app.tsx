@@ -1,32 +1,37 @@
+import { useEffect } from "react";
 import { ICONS, Sidebar, type NavItem } from "./components/sidebar";
 import { StatusBar } from "./components/status-bar";
 import { TitleBar } from "./components/title-bar";
 import { allServices, appStatus } from "./lib/app-status";
-import { usePath } from "./lib/router";
+import { redirect, usePath } from "./lib/router";
 import { useLiveData } from "./lib/use-live-data";
 import { ActivityPage } from "./pages/activity-page";
 import { AppsPage } from "./pages/apps-page";
+import { HomePage } from "./pages/home-page";
 import { JobsPage } from "./pages/jobs-page";
-import { OverviewPage } from "./pages/overview-page";
+import { MediaPage } from "./pages/media-page";
 import { SessionsPage } from "./pages/sessions-page";
-import { SystemPage } from "./pages/system-page";
 import { UptimePage } from "./pages/uptime-page";
 
 export function App() {
   const { snapshot, history, historySize, connection } = useLiveData();
   const path = usePath();
+  // The overview and system pages became one: old bookmarks still land somewhere.
+  useEffect(() => {
+    if (path === "/system" || path === "/overview") redirect("/");
+  }, [path]);
 
   const unhealthyApps = snapshot ? allServices(snapshot.apps).filter((service) => appStatus(service) === "down").length : 0;
   const failedJobs = snapshot ? snapshot.jobs.jobs.filter((job) => job.lastResult === "failed").length : 0;
   const downChecks = snapshot ? snapshot.uptime.monitors.filter((monitor) => monitor.status === 0).length : 0;
   const items: NavItem[] = [
-    { path: "/", label: "overview", icon: ICONS.overview },
-    { path: "/system", label: "system", icon: ICONS.system },
-    { path: "/uptime", label: "uptime", icon: ICONS.uptime, alerts: downChecks },
-    { path: "/apps", label: "apps", icon: ICONS.apps, alerts: unhealthyApps },
-    { path: "/jobs", label: "jobs", icon: ICONS.jobs, alerts: failedJobs },
-    { path: "/activity", label: "activity", icon: ICONS.activity },
-    { path: "/sessions", label: "sessions", icon: ICONS.sessions },
+    { path: "/", group: "the keep", label: "home", icon: ICONS.overview },
+    { path: "/uptime", group: "infra", label: "uptime", icon: ICONS.uptime, alerts: downChecks },
+    { path: "/apps", group: "infra", label: "apps", icon: ICONS.apps, alerts: unhealthyApps },
+    { path: "/jobs", group: "infra", label: "jobs", icon: ICONS.jobs, alerts: failedJobs },
+    { path: "/activity", group: "infra", label: "activity", icon: ICONS.activity },
+    { path: "/media", group: "personal", label: "media", icon: ICONS.media },
+    { path: "/sessions", group: "ai", label: "sessions", icon: ICONS.sessions },
   ];
 
   return (
@@ -43,8 +48,8 @@ export function App() {
             <AppsPage apps={snapshot.apps} />
           ) : path === "/jobs" ? (
             <JobsPage jobs={snapshot.jobs} />
-          ) : path === "/system" ? (
-            <SystemPage snapshot={snapshot} history={history} historySize={historySize} />
+          ) : path === "/media" ? (
+            <MediaPage snapshot={snapshot} />
           ) : path === "/uptime" ? (
             <UptimePage uptime={snapshot.uptime} kumaUrl={snapshot.links.kuma} />
           ) : path === "/activity" ? (
@@ -52,7 +57,7 @@ export function App() {
           ) : path === "/sessions" ? (
             <SessionsPage />
           ) : (
-            <OverviewPage snapshot={snapshot} history={history} />
+            <HomePage snapshot={snapshot} history={history} historySize={historySize} />
           )}
         </main>
       </div>

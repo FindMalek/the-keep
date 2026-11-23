@@ -1329,19 +1329,20 @@ a.button {
 
 /* Page layouts. The base .grid areas belong to the system page now. */
 
-.grid.overview {
+.grid.home {
   grid-template-columns: repeat(12, minmax(0, 1fr));
   grid-template-areas:
     "tiles tiles tiles tiles tiles tiles tiles tiles tiles tiles tiles tiles"
-    "mus mus mus dnsb dnsb dnsb inet inet inet read read read"
-    "bkt bkt bkt bkt bkt bkt svc svc svc svc svc svc";
+    "cpu cpu cpu cpu cpu cpu mem mem mem net net net"
+    "inet inet inet inet inet inet dnsb dnsb dnsb dnsb dnsb dnsb"
+    "disk disk disk disk smart smart smart sens sens sens sens sens"
+    "bkt bkt bkt bkt bkt bkt svc svc svc svc svc svc"
+    "ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr";
 }
 
-.grid.system {
-  grid-template-areas:
-    "cpu cpu cpu cpu cpu cpu mem mem mem net net net"
-    "disk disk disk disk smart smart smart sens sens sens sens sens"
-    "ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr";
+.grid.media {
+  grid-template-columns: repeat(12, minmax(0, 1fr));
+  grid-template-areas: "mus mus mus mus mus mus read read read read read read";
 }
 
 /* Tiles: eight equal cells sharing the grid's hairlines. */
@@ -1407,14 +1408,14 @@ a.button {
 }
 
 @media (max-width: 1180px) {
-  .grid.overview {
+  .grid.home {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "tiles tiles" "mus dnsb" "inet read" "bkt bkt" "svc svc";
+    grid-template-areas: "tiles tiles" "cpu cpu" "mem net" "inet dnsb" "disk smart" "sens sens" "bkt bkt" "svc svc" "ctr ctr";
   }
 
-  .grid.system {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "cpu cpu" "mem net" "disk smart" "sens sens" "ctr ctr";
+  .grid.media {
+    grid-template-columns: minmax(0, 1fr);
+    grid-template-areas: "mus" "read";
   }
 
   .tiles {
@@ -1423,14 +1424,9 @@ a.button {
 }
 
 @media (max-width: 720px) {
-  .grid.overview {
+  .grid.home {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "tiles" "mus" "dnsb" "inet" "read" "bkt" "svc";
-  }
-
-  .grid.system {
-    grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "cpu" "mem" "net" "disk" "smart" "sens" "ctr";
+    grid-template-areas: "tiles" "cpu" "mem" "net" "inet" "dnsb" "disk" "smart" "sens" "bkt" "svc" "ctr";
   }
 
   .tiles {

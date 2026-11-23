@@ -209,6 +209,8 @@ const server = Bun.serve({
     "/jobs": index,
     "/activity": index,
     "/sessions": index,
+    "/media": index,
+    "/overview": index,
     "/uptime": index,
     "/api/actions": {
       POST: async (request: Request) => {
