@@ -1,8 +1,10 @@
-import type { ReactNode } from "react";
+import { Fragment, type ReactNode } from "react";
 import { navigate } from "../lib/router";
 
 export interface NavItem {
   path: string;
+  /** Items with the same group sit under one heading; a new group starts a new heading. */
+  group: string;
   label: string;
   icon: ReactNode;
   /** Count of things needing attention, shown in red. */
@@ -44,6 +46,13 @@ export const ICONS = {
       <rect x="9.5" y="0.5" width="2" height="11" />
     </svg>
   ),
+  media: (
+    <svg viewBox="0 0 12 12" aria-hidden="true">
+      <path d="M4.5 9.5V2l6-1.5V8" />
+      <rect x="0.5" y="8.5" width="4" height="3" />
+      <rect x="6.5" y="7" width="4" height="3" />
+    </svg>
+  ),
   sessions: (
     <svg viewBox="0 0 12 12" aria-hidden="true">
       <rect x="0.5" y="0.5" width="11" height="8" />
@@ -62,19 +71,15 @@ export const ICONS = {
 export function Sidebar({ items, path }: { items: NavItem[]; path: string }) {
   return (
     <nav className="sidebar" aria-label="pages">
-      <span className="sidebar-label">pages</span>
-      {items.map((item) => (
-        <a
-          key={item.path}
-          href={item.path}
-          className="nav-item"
-          aria-current={item.path === path ? "page" : undefined}
-          onClick={navigate}
-        >
-          <span className="nav-icon">{item.icon}</span>
-          <span className="nav-label">{item.label}</span>
-          {item.alerts ? <span className="nav-alert">{item.alerts}</span> : null}
-        </a>
+      {items.map((item, index) => (
+        <Fragment key={item.path}>
+          {item.group !== items[index - 1]?.group && <span className="sidebar-label">{item.group}</span>}
+          <a href={item.path} className="nav-item" aria-current={item.path === path ? "page" : undefined} onClick={navigate}>
+            <span className="nav-icon">{item.icon}</span>
+            <span className="nav-label">{item.label}</span>
+            {item.alerts ? <span className="nav-alert">{item.alerts}</span> : null}
+          </a>
+        </Fragment>
       ))}
     </nav>
   );

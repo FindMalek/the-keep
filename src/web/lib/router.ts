@@ -25,3 +25,9 @@ export function navigate(event: MouseEvent<HTMLAnchorElement>): void {
   window.dispatchEvent(new Event(NAVIGATE));
   window.scrollTo(0, 0);
 }
+
+/** Replaces the current history entry; old bookmarks like `/system` land on their new page. */
+export function redirect(to: string): void {
+  window.history.replaceState(null, "", to);
+  window.dispatchEvent(new Event(NAVIGATE));
+}
