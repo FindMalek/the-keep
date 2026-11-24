@@ -19,10 +19,10 @@ CPU to containers, uptime to ad blocking, jobs you can run and a log of who logg
 | Page | |
 |---|---|
 | **home** | Eight tiles (cpu, memory, data disk, temperature, network, sites up, ads blocked, internet speed), then cpu per core with clock and load, memory, network per interface, internet speed and ad blocking, volumes and disks, disk health, every temperature sensor, space per app against its limit, your public sites and every container. Graphs for live / 1 h / 24 h / 7 d / 30 d. `/system` and `/overview` redirect here. |
-| **media** | Music from Navidrome (tracks, albums, now playing, recently added) and the reading list from Miniflux. |
+| **media** | Music from Navidrome, the Miniflux reading list, and Backrest plan and snapshot information. |
 | **uptime** | Every Uptime Kuma check: status, a 24-hour strip of half-hour bars, response time, 24 h and 30 d uptime, days left on the TLS certificate. |
 | **apps** | Every Dokploy project and service: containers, CPU, memory, domains, last deploy, plus a structured log of what the nightly cleanup removed. |
-| **jobs** | Scheduled host jobs with last result and next run, a *run now* button for each, and *tidy* / *reboot* buttons. |
+| **jobs** | Scheduled host jobs, n8n workflow diagrams and recent execution metadata, plus host actions. |
 | **activity** | Tailnet devices, who's connected right now (SSH, Dokploy, this dashboard), and a 7-day timeline of logins, sudo commands, deploys, cleanups and reboots, folded into sessions. |
 
 | system | uptime |
@@ -98,6 +98,8 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
 | `DOKPLOY_URL`, `DOKPLOY_PUBLIC_URL` | — | Dokploy API (key from `DOKPLOY_ENV`) and the link base for services |
 | `KUMA_URL` | — | Uptime Kuma, read via `/metrics` with the API key in `KUMA_KEY` |
 | `KUMA_PUBLIC_URL`, `NAVIDROME_PUBLIC_URL`, `MINIFLUX_PUBLIC_URL` | — | where the panels' "open ↗" links go |
+| `N8N_URL` | — | Internal n8n base URL. Add `N8N_API_KEY` to `DATA_DIR/integrations.env` or supply it as an environment variable. The key stays server-side. |
+| `BACKREST_URL` | — | Internal Backrest URL. If authentication is enabled, add `BACKREST_USER` and `BACKREST_PASSWORD` to `DATA_DIR/integrations.env` or supply them as environment variables. Use a trusted private network or HTTPS. |
 | `SPEEDTEST_DB` | `/host/speedtest/database.sqlite` | Speedtest Tracker's database, mounted read-only |
 | `KEEP_GATE` | — | the secret your VPN route sends as `X-Keep-Gate`; unset, the API is open to whatever reaches the port |
 | `DOCKER_HOST` | — | `tcp://docker-proxy:2375`; without it, `DOCKER_SOCKET` (`/var/run/docker.sock`) |
@@ -106,6 +108,10 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
 Files the host side writes into `DATA_DIR` (all JSON): `jobs.json` and `activity.json` (agent), `actions.json`,
 `cleanup-runs.json`, `tidy.json`, and optionally `usage.json` (per-app space against limits) and
 `music-import.json` — the shapes are the `*Stats` types in [`src/shared/types.ts`](src/shared/types.ts).
+
+The n8n panel lists at most 300 workflows and the latest 50 execution records. It sends only node names, types, positions and connections to the browser, not node parameters or execution payloads. It does not execute workflows: n8n's public API does not provide a general run-by-ID endpoint. Run workflows through an appropriate n8n trigger until an explicitly authorized execution integration is configured.
+
+Backrest summaries come from `GetSummaryDashboard`; recent snapshot IDs come from indexed snapshot operations among the latest 200 operations. The list is not a complete inventory and does not verify that a restore will work.
 
 ## Develop
 

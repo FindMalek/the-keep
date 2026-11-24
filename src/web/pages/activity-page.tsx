@@ -259,12 +259,20 @@ export function ActivityPage() {
         meta={data?.updatedAt ? `who's connected and what happened · host log read ${since(Date.parse(data.updatedAt))}` : "loading"}
       />
       {data && (
-        <div className="grid activity">
-          <DevicesPanel data={data} />
-          <NetworkDevicesPanel data={data} />
-          <ConnectedPanel data={data} />
-          <TimelinePanel data={data} />
-        </div>
+        <>
+          <div className="activity-overview" aria-label="activity overview">
+            <div><span>tailnet online</span><strong>{data.devices.filter((device) => device.online).length}<small> / {data.devices.length} devices</small></strong></div>
+            <div><span>lan online</span><strong>{data.networkDevices.filter((device) => device.online).length}<small> / {data.networkDevices.length} devices</small></strong></div>
+            <div><span>open ssh sessions</span><strong>{data.openSessions.length}</strong></div>
+            <div><span>failed logins · 7 days</span><strong className={data.events.some((event) => event.kind === "ssh-failed") ? "level-crit" : ""}>{data.events.filter((event) => event.kind === "ssh-failed").length}</strong></div>
+          </div>
+          <div className="grid activity">
+            <DevicesPanel data={data} />
+            <NetworkDevicesPanel data={data} />
+            <ConnectedPanel data={data} />
+            <TimelinePanel data={data} />
+          </div>
+        </>
       )}
     </>
   );

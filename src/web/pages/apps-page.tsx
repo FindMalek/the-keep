@@ -1,3 +1,4 @@
+import { useState } from "react";
 import type { AppService, AppsStats } from "../../shared/types";
 import { CleanupPanel } from "../components/cleanup-panel";
 import { DomainList } from "../components/domain-list";
@@ -80,8 +81,12 @@ function ServiceRow({ service }: { service: AppService }) {
 }
 
 export function AppsPage({ apps }: { apps: AppsStats }) {
+  const [query, setQuery] = useState("");
+  const [showCleanup, setShowCleanup] = useState(false);
   const services = allServices(apps);
   const failing = services.filter((service) => appStatus(service) !== "ok").length;
+  const search = query.trim().toLowerCase();
+  const projects = apps.projects.filter((project) => !search || project.name.toLowerCase().includes(search) || project.environments.some((env) => env.services.some((service) => service.name.toLowerCase().includes(search))));
 
   return (
     <>
@@ -94,7 +99,14 @@ export function AppsPage({ apps }: { apps: AppsStats }) {
         }
       />
       <div className="stack">
-        {apps.projects.map((project) => (
+        <div className="apps-toolbar">
+          <label htmlFor="apps-search">find a service</label>
+          <input id="apps-search" type="search" value={query} onChange={(event) => setQuery(event.target.value)} placeholder="search projects or services" />
+        </div>
+        {!apps.reachable && <p className="empty dashboard-notice">Dokploy is unavailable. Check the dashboard's Dokploy URL and API key.</p>}
+        {apps.reachable && services.length === 0 && <p className="empty dashboard-notice">No services returned by Dokploy.</p>}
+        {apps.reachable && search && projects.length === 0 && <p className="empty dashboard-notice">No matching projects or services.</p>}
+        {projects.map((project) => (
           <section className="panel" key={project.id} aria-label={project.name}>
             <header className="panel-header">
               <h2>{project.name.toLowerCase()}</h2>
@@ -121,7 +133,7 @@ export function AppsPage({ apps }: { apps: AppsStats }) {
                         </tr>
                       </thead>
                       <tbody>
-                        {environment.services.map((service) => (
+                        {environment.services.filter((service) => !search || project.name.toLowerCase().includes(search) || service.name.toLowerCase().includes(search)).map((service) => (
                           <ServiceRow key={service.id} service={service} />
                         ))}
                       </tbody>
@@ -132,7 +144,10 @@ export function AppsPage({ apps }: { apps: AppsStats }) {
             </div>
           </section>
         ))}
-        <CleanupPanel runs={apps.cleanupRuns} />
+        <details className="cleanup-disclosure" onToggle={(event) => setShowCleanup(event.currentTarget.open)}>
+          <summary>cleanup history · {apps.cleanupRuns.length} runs</summary>
+          {showCleanup && <CleanupPanel runs={apps.cleanupRuns} />}
+        </details>
       </div>
     </>
   );

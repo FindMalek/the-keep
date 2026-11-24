@@ -15,12 +15,16 @@ export function usePath(): string {
   return useSyncExternalStore(subscribe, () => window.location.pathname);
 }
 
+export function useSearch(): string {
+  return useSyncExternalStore(subscribe, () => window.location.search);
+}
+
 /** Click handler for in-app links; leaves cmd/ctrl-click to the browser. */
 export function navigate(event: MouseEvent<HTMLAnchorElement>): void {
   if (event.metaKey || event.ctrlKey || event.shiftKey || event.button !== 0) return;
   event.preventDefault();
   const href = event.currentTarget.getAttribute("href");
-  if (!href || href === window.location.pathname) return;
+  if (!href || href === `${window.location.pathname}${window.location.search}${window.location.hash}`) return;
   window.history.pushState(null, "", href);
   window.dispatchEvent(new Event(NAVIGATE));
   window.scrollTo(0, 0);

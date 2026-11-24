@@ -118,7 +118,7 @@ export function HomePage({ snapshot, history, historySize }: HomePageProps) {
     {
       label: "sites",
       value: snapshot.uptime.reachable ? `${sites.length - sitesDown}/${sites.length}` : "—",
-      sub: sitesDown ? `${sitesDown} down` : "all up",
+      sub: !snapshot.uptime.reachable ? "monitor unavailable" : sitesDown ? `${sitesDown} down` : sites.length ? "all up" : "no monitors",
       tone: sitesDown ? "crit" : undefined,
       href: "/uptime",
     },

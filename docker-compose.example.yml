@@ -16,6 +16,8 @@ services:
       KUMA_PUBLIC_URL: "https://kuma.example.com"
       NAVIDROME_PUBLIC_URL: "https://music.example.com"
       MINIFLUX_PUBLIC_URL: "https://rss.example.com"
+      # N8N_URL: "http://n8n:5678" # N8N_API_KEY belongs in /data/integrations.env
+      # BACKREST_URL: "http://backrest:9898" # BACKREST_USER and BACKREST_PASSWORD belong in /data/integrations.env
       # Docker only through the proxy below (a :ro socket mount still allows the whole Docker API).
       DOCKER_HOST: "tcp://docker-proxy:2375"
       # Your reverse proxy's VPN-only route must add `X-Keep-Gate: <this>`; without it the API answers 403, so other

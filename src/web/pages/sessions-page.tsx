@@ -3,7 +3,7 @@ import type { SessionRow } from "../../sessions/store";
 import { Chip } from "../components/chip";
 import { PageHeader } from "../components/page-header";
 import { Panel } from "../components/panel";
-import { navigate } from "../lib/router";
+import { navigate, useSearch } from "../lib/router";
 import { stamp } from "../lib/time";
 import { useSession, useSessions } from "../lib/use-sessions";
 
@@ -84,6 +84,7 @@ function Detail({ id }: { id: string }) {
 function List({ sessions }: { sessions: SessionRow[] }) {
   return (
     <Panel title="sessions" area="list" meta={`${sessions.length} newest`}>
+      {sessions.length === 0 ? <p className="empty">no sessions received yet · sessions must be ingested and pushed from each machine</p> : (
       <table className="table">
         <thead>
           <tr>
@@ -115,17 +116,18 @@ function List({ sessions }: { sessions: SessionRow[] }) {
           ))}
         </tbody>
       </table>
+      )}
     </Panel>
   );
 }
 
 export function SessionsPage() {
   const data = useSessions();
-  const selected = new URLSearchParams(window.location.search).get("s");
+  const selected = new URLSearchParams(useSearch()).get("s");
   const totals = useMemo(() => {
-    const out = { tokensIn: 0, tokensOut: 0, cost: 0, byModel: new Map<string, number>() };
+    const out: { tokensIn: number; tokensOut: number; cost: number | null; byModel: Map<string, number> } = { tokensIn: 0, tokensOut: 0, cost: null, byModel: new Map() };
     for (const s of data?.sessions ?? []) {
-      out.cost += s.costUsd ?? 0;
+      if (s.costUsd !== null) out.cost = (out.cost ?? 0) + s.costUsd;
       for (const m of s.models) {
         out.tokensIn += m.tokensIn;
         out.tokensOut += m.tokensOut;
@@ -143,7 +145,7 @@ export function SessionsPage() {
           <Detail id={selected} />
         ) : data ? (
           <>
-            <Panel title="newest 200 sessions" area="usage" meta="tokens and cost per session">
+            {data.sessions.length > 0 && <Panel title="newest 200 sessions" area="usage" meta="tokens and cost per session">
               <p className="num">
                 {compact(totals.tokensIn)} in · {compact(totals.tokensOut)} out · {usd(totals.cost)}
               </p>
@@ -154,7 +156,7 @@ export function SessionsPage() {
                   .map(([model, tokens]) => `${model} ${compact(tokens)}`)
                   .join(" · ")}
               </p>
-            </Panel>
+            </Panel>}
             <List sessions={data.sessions} />
           </>
         ) : null}

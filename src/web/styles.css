@@ -757,6 +757,7 @@ a:focus-visible {
 
 .page .grid {
   flex: 1;
+  background: var(--bg);
 }
 
 .page-header {
@@ -1342,7 +1343,7 @@ a.button {
 
 .grid.media {
   grid-template-columns: repeat(12, minmax(0, 1fr));
-  grid-template-areas: "mus mus mus mus mus mus read read read read read read";
+  grid-template-areas: "mus mus mus mus mus mus read read read read read read" "backup backup backup backup backup backup backup backup backup backup backup backup";
 }
 
 /* Tiles: eight equal cells sharing the grid's hairlines. */
@@ -1415,7 +1416,7 @@ a.button {
 
   .grid.media {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "mus" "read";
+    grid-template-areas: "mus" "read" "backup";
   }
 
   .tiles {
@@ -1518,6 +1519,180 @@ a.button {
 
 .track-who {
   max-width: 40%;
+}
+
+/* Operational overview */
+.page-header {
+  min-height: 60px;
+  padding: 10px 20px;
+}
+
+.page-title h2 {
+  font: 500 19px/1.2 var(--font-ui);
+  letter-spacing: -0.02em;
+}
+
+.panel-header {
+  height: 40px;
+}
+
+.panel-header h2 {
+  font: 500 12px var(--font-ui);
+  letter-spacing: 0.02em;
+}
+
+.nav-item {
+  height: 34px;
+}
+
+.nav-item[aria-current="page"] {
+  box-shadow: inset 2px 0 var(--fill-mid);
+}
+
+.apps-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 14px 16px;
+  background: var(--bg);
+  color: var(--muted);
+}
+
+.apps-toolbar input {
+  width: min(320px, 100%);
+  padding: 8px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
+.dashboard-notice,
+.cleanup-disclosure {
+  padding: 16px;
+  background: var(--bg);
+}
+
+.cleanup-disclosure summary {
+  cursor: pointer;
+  color: var(--muted);
+}
+
+.cleanup-disclosure[open] summary {
+  margin-bottom: 16px;
+}
+
+.activity-overview,
+.backup-summary {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 1px;
+  background: var(--border);
+}
+
+.activity-overview {
+  border-bottom: 1px solid var(--border);
+}
+
+.activity-overview > div,
+.backup-summary > div {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 16px;
+  background: var(--bg);
+}
+
+.activity-overview span,
+.backup-summary span {
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.activity-overview strong,
+.backup-summary strong {
+  font: 500 18px var(--font-mono);
+}
+
+.activity-overview small {
+  color: var(--muted);
+  font: 400 11px var(--font-ui);
+}
+
+.backup-summary {
+  border: 1px solid var(--border);
+}
+
+.backup-job {
+  display: flex;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 8px;
+  border-top: 1px solid var(--border);
+}
+
+.workflow-layout {
+  display: grid;
+  grid-template-columns: minmax(180px, 250px) minmax(0, 1fr);
+  border: 1px solid var(--border);
+  min-width: 0;
+}
+
+.workflow-list {
+  max-height: 420px;
+  overflow-y: auto;
+  border-right: 1px solid var(--border);
+}
+
+.workflow-list button {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  width: 100%;
+  padding: 10px 12px;
+  border: 0;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text);
+  text-align: left;
+  font: inherit;
+  cursor: pointer;
+}
+
+.workflow-list button:hover,
+.workflow-list button[aria-pressed="true"] {
+  background: var(--surface);
+}
+
+.workflow-list button[aria-pressed="true"] {
+  box-shadow: inset 2px 0 var(--fill-mid);
+}
+
+.workflow-detail { min-width: 0; }
+.workflow-heading { display: flex; align-items: center; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
+.workflow-canvas-scroll { overflow: auto; max-height: 420px; }
+.workflow-canvas { position: relative; min-width: 100%; min-height: 140px; background-image: radial-gradient(var(--border-strong) 0.8px, transparent 0.8px); background-size: 18px 18px; }
+.workflow-canvas svg { position: absolute; inset: 0; pointer-events: none; }
+.workflow-canvas path { fill: none; stroke: var(--fill-mid); stroke-width: 1.5; }
+.workflow-node { position: absolute; display: flex; flex-direction: column; justify-content: center; width: 164px; height: 56px; padding: 8px 10px; border: 1px solid var(--border-strong); background: var(--bg); overflow: hidden; }
+.workflow-node strong, .workflow-node span { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.workflow-node span { font: 11px var(--font-mono); color: var(--muted); }
+.workflow-node-disabled { opacity: 0.5; border-style: dashed; }
+
+@media (max-width: 720px) {
+  .workflow-layout { grid-template-columns: minmax(0, 1fr); }
+  .workflow-list { max-height: 180px; border-right: 0; border-bottom: 1px solid var(--border); }
+  .activity-overview,
+  .backup-summary {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .apps-toolbar {
+    align-items: stretch;
+    flex-direction: column;
+    gap: 6px;
+  }
 }
 
 @media (max-width: 720px) {

@@ -16,6 +16,8 @@ import { collectHost, publicIp, resolveIp } from "./collectors/system";
 import { createAppsCollector } from "./collectors/apps";
 import { collectJobs, collectUsage, requestAction } from "./collectors/jobs";
 import { recordAiUsage } from "./collectors/ai-usage";
+import { collectN8n } from "./collectors/n8n";
+import { collectBackrest } from "./collectors/backrest";
 import { SessionStore } from "./sessions/store";
 import { toHandoffMarkdown } from "./sessions/export";
 import { isParsedSession } from "./sessions/validate";
@@ -254,6 +256,8 @@ const server = Bun.serve({
         return new Response(null, { status: 202 });
       },
     },
+    "/api/n8n": async () => Response.json(await collectN8n(process.env.N8N_URL ?? null, config.dataDir)),
+    "/api/backrest": async () => Response.json(await collectBackrest(process.env.BACKREST_URL ?? null, config.dataDir)),
     "/api/history": (request: Request) => {
       const params = new URL(request.url).searchParams;
       const range = params.get("range") as RangeName | null;

@@ -3,6 +3,7 @@ import { ActionButton } from "../components/action-button";
 import { Chip } from "../components/chip";
 import { PageHeader } from "../components/page-header";
 import { StatusSquare, type Status } from "../components/status-square";
+import { WorkflowsPanel } from "../components/workflows-panel";
 import { bytes, duration } from "../lib/format";
 import { since } from "../lib/time";
 
@@ -79,7 +80,6 @@ function runStatus(run: GitHubRun): Status | null {
 }
 
 function AiUsagePanel({ usage }: { usage: JobsStats["aiUsage"] }) {
-  if (!usage?.length) return null;
   const fmt = (v: number | null, resets: string | null) =>
     v === null ? "—" : `${Math.round(v)}%${resets ? ` · resets in ${until(resets)}` : ""}`;
   return (
@@ -88,7 +88,7 @@ function AiUsagePanel({ usage }: { usage: JobsStats["aiUsage"] }) {
         <h2>ai usage</h2>
       </header>
       <div className="panel-body">
-        <table>
+        {!usage?.length ? <p className="empty">no usage readings received · a collector must send readings to the dashboard</p> : <table className="table">
           <thead>
             <tr><th>tool</th><th>machine</th><th>5 hours</th><th>week</th></tr>
           </thead>
@@ -102,7 +102,7 @@ function AiUsagePanel({ usage }: { usage: JobsStats["aiUsage"] }) {
               </tr>
             ))}
           </tbody>
-        </table>
+        </table>}
       </div>
     </section>
   );
@@ -196,6 +196,7 @@ export function JobsPage({ jobs }: { jobs: JobsStats }) {
     <>
       <PageHeader title="jobs" meta={`${jobs.jobs.length} scheduled${failing ? ` · ${failing} failed` : ""} · times in utc`} />
       <div className="stack">
+        <WorkflowsPanel />
         <section className="panel" aria-label="scheduled jobs">
           <header className="panel-header">
             <h2>scheduled</h2>
