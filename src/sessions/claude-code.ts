@@ -14,7 +14,7 @@ function userText(content: unknown): string {
 }
 
 /** Parses one Claude Code session file (JSONL). Streaming splits one API reply into several lines sharing `message.id`; they are merged. */
-export function parseClaudeSession(jsonl: string, machine: string): ParsedSession | null {
+export function parseClaudeSession(jsonl: string, machine: string, sidechain = false): ParsedSession | null {
   const lines: Json[] = [];
   for (const raw of jsonl.split("\n")) {
     if (!raw.trim()) continue;
@@ -25,7 +25,9 @@ export function parseClaudeSession(jsonl: string, machine: string): ParsedSessio
     }
   }
 
-  const nativeId = lines.find((l) => typeof l.sessionId === "string")?.sessionId as string | undefined;
+  const parentId = lines.find((l) => typeof l.sessionId === "string")?.sessionId as string | undefined;
+  const agentId = lines.find((l) => typeof l.agentId === "string")?.agentId as string | undefined;
+  const nativeId = sidechain ? (agentId ? `agent:${agentId}` : undefined) : parentId;
   if (!nativeId) return null;
 
   const messages: SessionMessage[] = [];
@@ -43,7 +45,7 @@ export function parseClaudeSession(jsonl: string, machine: string): ParsedSessio
     if (l.type === "cost-state" && typeof l.startTime === "number") costRuns.set(l.startTime, l);
 
     const at = Date.parse(l.timestamp ?? "") || 0;
-    if (l.isSidechain) continue;
+    if (l.isSidechain && !sidechain) continue;
 
     if (l.type === "user" && l.message) {
       const content = l.message.content;
@@ -118,8 +120,8 @@ export function parseClaudeSession(jsonl: string, machine: string): ParsedSessio
       directory,
       branch,
       title: title ?? messages.find((m) => m.role === "user")?.text.trim().replace(/\s+/g, " ").slice(0, 80) ?? null,
-      startedAt: Math.min(...stamps),
-      endedAt: Math.max(...stamps),
+      startedAt: stamps.length ? Math.min(...stamps) : 0,
+      endedAt: stamps.length ? Math.max(...stamps) : 0,
       costUsd: costRuns.size ? costUsd : null,
       models: [...models.values()],
     },

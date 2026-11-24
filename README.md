@@ -24,6 +24,7 @@ CPU to containers, uptime to ad blocking, jobs you can run and a log of who logg
 | **apps** | Every Dokploy project and service: containers, CPU, memory, domains, last deploy, plus a structured log of what the nightly cleanup removed. |
 | **jobs** | Scheduled host jobs, n8n workflow diagrams and recent execution metadata, plus host actions. |
 | **activity** | Tailnet devices, who's connected right now (SSH, Dokploy, this dashboard), and a 7-day timeline of logins, sudo commands, deploys, cleanups and reboots, folded into sessions. |
+| **sessions** | Synced Claude Code and OpenCode conversations, filterable by repository. |
 
 | system | uptime |
 |---|---|
@@ -116,6 +117,8 @@ Alternatively, install `host/keep-n8n-status.py` as `/usr/local/bin/keep-n8n-sta
 Backrest summaries come from `GetSummaryDashboard`; recent snapshot IDs come from indexed snapshot operations among the latest 200 operations. The list is not a complete inventory and does not verify that a restore will work.
 
 For a local restic repository, `host/keep-backrest-status.py` can instead list snapshots without a Backrest login. Install it as `/usr/local/bin/keep-backrest-status`, configure `KEEP_BACKREST_CONFIG`, `KEEP_BACKREST_CONTAINER`, and `KEEP_BACKREST_REPO_ID` in `/etc/keep-dashboard-backrest.env`, and enable `keep-backrest-status.timer`. The host-only collector reads the repository password from Backrest's configuration and writes snapshot metadata, not credentials or paths, to a mode-0600 file. Its results expire after 30 minutes and do not report backup execution health.
+
+`bun src/sessions/cli.ts push` imports local Claude Code and OpenCode sessions and sends them to `KEEP_URL` over HTTPS. The dashboard must support repository labels before a push will proceed. Set `KEEP_SESSIONS_INCLUDE` to comma-separated repository directories to restrict the sync, or `KEEP_SESSIONS_EXCLUDE` to exclude paths. Without an include list, all accessible sessions may be copied, including their messages and tool outputs. For a local Tailscale SOCKS proxy, set `KEEP_SESSIONS_SOCKS_PROXY` to `127.0.0.1:1055`. The local and server session databases are private to their owning user.
 
 ## Develop
 

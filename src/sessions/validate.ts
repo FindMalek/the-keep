@@ -13,6 +13,7 @@ export function isParsedSession(value: unknown): value is ParsedSession {
     TOOLS.has(s.tool) &&
     typeof s.machine === "string" &&
     typeof s.nativeId === "string" &&
+    (s.repository == null || (typeof s.repository === "string" && s.repository.length <= 255)) &&
     Number.isFinite(s.startedAt) &&
     Number.isFinite(s.endedAt) &&
     Array.isArray(s.models) &&

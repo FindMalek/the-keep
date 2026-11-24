@@ -42,6 +42,7 @@ export interface Session {
   tool: Tool;
   machine: string;
   directory: string | null;
+  repository?: string | null;
   branch: string | null;
   title: string | null;
   startedAt: number;

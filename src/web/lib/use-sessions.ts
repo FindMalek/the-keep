@@ -5,17 +5,22 @@ import type { ParsedSession } from "../../sessions/types";
 export interface SessionsPayload {
   sessions: SessionRow[];
   usage: UsageRow[];
+  total: number;
+  repositories: string[];
 }
 
 const REFRESH_MS = 30_000;
 
-export function useSessions(): SessionsPayload | null {
+export function useSessions(repository: string | null, offset: number): SessionsPayload | null {
   const [data, setData] = useState<SessionsPayload | null>(null);
   useEffect(() => {
     let cancelled = false;
+    setData(null);
     const load = async (): Promise<void> => {
       try {
-        const response = await fetch("/api/sessions");
+        const params = new URLSearchParams({ offset: String(offset) });
+        if (repository !== null) params.set("repository", repository);
+        const response = await fetch(`/api/sessions?${params}`);
         if (response.ok && !cancelled) setData((await response.json()) as SessionsPayload);
       } catch {
         // keep the last good data
@@ -27,7 +32,7 @@ export function useSessions(): SessionsPayload | null {
       cancelled = true;
       clearInterval(id);
     };
-  }, []);
+  }, [repository, offset]);
   return data;
 }
 

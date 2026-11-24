@@ -227,7 +227,12 @@ const server = Bun.serve({
       },
     },
     "/api/sessions": {
-      GET: () => Response.json({ sessions: sessionStore.list(200), usage: sessionStore.usageByDay(Date.now() - 90 * 86_400_000) }),
+      GET: (request: Request) => {
+        const params = new URL(request.url).searchParams;
+        const repository = params.get("repository");
+        const offset = Math.min(1_000_000, Math.max(0, Math.floor(Number(params.get("offset")) || 0)));
+        return Response.json({ sessions: sessionStore.list(200, offset, repository), total: sessionStore.count(repository), repositories: sessionStore.repositories(), usage: sessionStore.usageByDay(Date.now() - 90 * 86_400_000) });
+      },
       POST: async (request: Request) => {
         if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
         const body = await request.json().catch(() => null);

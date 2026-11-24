@@ -1,6 +1,5 @@
 import { useMemo, useState } from "react";
 import type { SessionRow } from "../../sessions/store";
-import { Chip } from "../components/chip";
 import { PageHeader } from "../components/page-header";
 import { Panel } from "../components/panel";
 import { navigate, useSearch } from "../lib/router";
@@ -42,7 +41,7 @@ function Detail({ id }: { id: string }) {
   const { session: s, messages } = data;
   return (
     <>
-      <Panel title={s.title ?? short(s.id)} area="usage" meta={`${s.tool} · ${s.machine} · ${stamp(s.startedAt)}`}>
+      <Panel title={s.title ?? short(s.id)} area="usage" meta={`${s.tool} · ${s.machine} · ${s.startedAt ? stamp(s.startedAt) : "unknown time"}`}>
         <div className="session-actions">
           <CopyButton label="copy claude command" text={pullCommand("claude")} />
           <CopyButton label="copy opencode command" text={pullCommand("opencode")} />
@@ -52,7 +51,7 @@ function Detail({ id }: { id: string }) {
           </a>
         </div>
         <p className="muted">
-          {s.directory ?? ""} {s.branch ? `· ${s.branch}` : ""} · {messages.length} messages · {usd(s.costUsd)}
+          {s.repository ?? "no repository"} {s.directory ? `· ${s.directory}` : ""} {s.branch ? `· ${s.branch}` : ""} · {messages.length} messages · {usd(s.costUsd)}
         </p>
       </Panel>
       <Panel title="conversation" area="list">
@@ -70,8 +69,14 @@ function Detail({ id }: { id: string }) {
                 )}
               </div>
               {m.text && <pre className="session-text">{m.text.length > 4000 ? `${m.text.slice(0, 4000)}…` : m.text}</pre>}
+              {m.text.length > 4000 && <details className="session-tool"><summary>show full message</summary><pre className="session-text">{m.text}</pre></details>}
+              {m.reasoning && <details className="session-tool"><summary>reasoning</summary><pre className="session-text">{m.reasoning}</pre></details>}
               {m.toolCalls.map((c, i) => (
-                <Chip key={i}>{c.name}</Chip>
+                <details className="session-tool" key={i}>
+                  <summary>{c.name} · {c.status}</summary>
+                  {c.input != null && <pre className="session-text">{JSON.stringify(c.input, null, 2)}</pre>}
+                  {c.output && <pre className="session-text">{c.output}</pre>}
+                </details>
               ))}
             </li>
           ))}
@@ -81,15 +86,23 @@ function Detail({ id }: { id: string }) {
   );
 }
 
-function List({ sessions }: { sessions: SessionRow[] }) {
+function List({ sessions, repositories, repository, offset, total, onRepository, onOffset }: {
+  sessions: SessionRow[]; repositories: string[]; repository: string | null; offset: number; total: number;
+  onRepository: (repository: string | null) => void; onOffset: (offset: number) => void;
+}) {
   return (
-    <Panel title="sessions" area="list" meta={`${sessions.length} newest`}>
-      {sessions.length === 0 ? <p className="empty">no sessions received yet · sessions must be ingested and pushed from each machine</p> : (
+    <Panel title="sessions" area="list" meta={total ? `${offset + 1}–${offset + sessions.length} of ${total}` : "0 sessions"}>
+      <label className="session-filter">repository <select value={repository === null ? "all" : repository === "" ? "unassigned" : `repo:${repository}`} onChange={(event) => {
+        const value = event.target.value;
+        onRepository(value === "all" ? null : value === "unassigned" ? "" : value.slice(5));
+      }}><option value="all">all repositories</option><option value="unassigned">no repository</option>{repositories.map((name) => <option key={name} value={`repo:${name}`}>{name}</option>)}</select></label>
+      {sessions.length === 0 ? <p className="empty">{repository === null ? "no sessions received yet · sessions must be ingested and pushed from each machine" : "no sessions for this repository"}</p> : (
       <table className="table">
         <thead>
           <tr>
             <th>when</th>
             <th>session</th>
+            <th className="hide-narrow">repository</th>
             <th className="hide-narrow">tool</th>
             <th className="hide-narrow">machine</th>
             <th className="right hide-narrow">msgs</th>
@@ -100,13 +113,13 @@ function List({ sessions }: { sessions: SessionRow[] }) {
         <tbody>
           {sessions.map((s) => (
             <tr key={s.id}>
-              <td className="num muted">{stamp(s.startedAt)}</td>
+              <td className="num muted">{s.startedAt ? stamp(s.startedAt) : "—"}</td>
               <td className="wrap">
                 <a href={`/sessions?s=${encodeURIComponent(s.id)}`} onClick={navigate}>
                   {s.title ?? short(s.id)}
                 </a>
-                {s.directory && <span className="muted"> {s.directory.split("/").slice(-1)[0]}</span>}
               </td>
+              <td className="hide-narrow muted">{s.repository ?? "—"}</td>
               <td className="hide-narrow">{s.tool}</td>
               <td className="hide-narrow muted">{s.machine}</td>
               <td className="num right hide-narrow">{s.messageCount}</td>
@@ -117,12 +130,15 @@ function List({ sessions }: { sessions: SessionRow[] }) {
         </tbody>
       </table>
       )}
+      {total > 200 && <div className="session-actions"><button className="button" type="button" disabled={offset === 0} onClick={() => onOffset(Math.max(0, offset - 200))}>newer</button><button className="button" type="button" disabled={offset + sessions.length >= total} onClick={() => onOffset(offset + 200)}>older</button></div>}
     </Panel>
   );
 }
 
 export function SessionsPage() {
-  const data = useSessions();
+  const [repository, setRepository] = useState<string | null>(null);
+  const [offset, setOffset] = useState(0);
+  const data = useSessions(repository, offset);
   const selected = new URLSearchParams(useSearch()).get("s");
   const totals = useMemo(() => {
     const out: { tokensIn: number; tokensOut: number; cost: number | null; byModel: Map<string, number> } = { tokensIn: 0, tokensOut: 0, cost: null, byModel: new Map() };
@@ -139,13 +155,13 @@ export function SessionsPage() {
 
   return (
     <>
-      <PageHeader title="sessions" meta={data ? `${data.sessions.length} logged` : "loading"} />
+      <PageHeader title="sessions" meta={data ? `${data.total} logged` : "loading"} />
       <div className="grid sessions">
         {selected ? (
           <Detail id={selected} />
         ) : data ? (
           <>
-            {data.sessions.length > 0 && <Panel title="newest 200 sessions" area="usage" meta="tokens and cost per session">
+            {data.sessions.length > 0 && <Panel title="sessions on this page" area="usage" meta="tokens and cost per session">
               <p className="num">
                 {compact(totals.tokensIn)} in · {compact(totals.tokensOut)} out · {usd(totals.cost)}
               </p>
@@ -157,7 +173,7 @@ export function SessionsPage() {
                   .join(" · ")}
               </p>
             </Panel>}
-            <List sessions={data.sessions} />
+            <List sessions={data.sessions} repositories={data.repositories} repository={repository} offset={offset} total={data.total} onRepository={(next) => { setRepository(next); setOffset(0); }} onOffset={setOffset} />
           </>
         ) : null}
       </div>

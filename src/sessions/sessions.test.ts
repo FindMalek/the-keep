@@ -1,10 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { mkdtempSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseClaudeSession } from "./claude-code";
 import { toClaudeJsonl, toHandoffMarkdown, toOpenCodeJson } from "./export";
-import { parseOpenCodeMessage } from "./opencode";
+import { parseOpenCodeMessage, readOpenCode } from "./opencode";
 import { SessionStore } from "./store";
 
 const line = (o: unknown) => JSON.stringify(o);
@@ -49,9 +50,36 @@ describe("claude code", () => {
     expect(back.messages[1]!.text).toContain("[tool Read]");
     expect(back.session.directory).toBe("/work/app");
   });
+
+  test("keeps subagent conversations separate from their parent", () => {
+    const line = JSON.stringify({ ...base, agentId: "agent1", isSidechain: true, type: "user", timestamp: "2026-11-01T10:00:00Z", message: { role: "user", content: "subtask" } });
+    expect(parseClaudeSession(line, "mac")).toBeNull();
+    const agent = parseClaudeSession(line, "mac", true)!;
+    expect(agent.session.id).toBe("claude-code:mac:agent:agent1");
+    expect(agent.messages[0]?.text).toBe("subtask");
+  });
+
+  test("uses an unknown time when a conversation has no timestamps", () => {
+    const parsed = parseClaudeSession(JSON.stringify({ ...base, type: "user", message: { role: "user", content: "hello" } }), "mac")!;
+    expect(parsed.session.startedAt).toBe(0);
+    expect(parsed.session.endedAt).toBe(0);
+  });
 });
 
 describe("opencode", () => {
+  test("imports child sessions as separate conversations", () => {
+    const dir = mkdtempSync(join(tmpdir(), "keep-opencode-"));
+    const path = join(dir, "opencode.db");
+    const db = new Database(path);
+    db.run("CREATE TABLE project (id TEXT, worktree TEXT)");
+    db.run("CREATE TABLE session_v2 (id TEXT, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER)");
+    db.run("CREATE TABLE session_message (session_id TEXT, type TEXT, data TEXT, seq INTEGER)");
+    db.run("INSERT INTO session_v2 VALUES ('parent', NULL, NULL, NULL, NULL, NULL, NULL, 1, 2), ('child', NULL, 'parent', NULL, NULL, NULL, NULL, 1, 2)");
+    db.run("INSERT INTO session_message VALUES ('parent', 'user', '{\"text\":\"hello\"}', 0), ('child', 'user', '{\"text\":\"subtask\"}', 0)");
+    db.close();
+    expect([...readOpenCode(path, "mac")].map((entry) => entry.session.nativeId)).toEqual(["parent", "child"]);
+  });
+
   test("reads tokens, cost, reasoning and tool output from an assistant message", () => {
     const m = parseOpenCodeMessage(
       "assistant",
@@ -82,6 +110,57 @@ describe("store and exports", () => {
     store.upsert({ ...parsed, messages: parsed.messages.slice(0, 1) });
     expect(store.list()).toHaveLength(1);
     expect(store.get(parsed.session.id)!.messages).toHaveLength(1);
+    store.close();
+  });
+
+  test("stores repository labels and filters sessions without exposing the database", () => {
+    const dir = mkdtempSync(join(tmpdir(), "keep-sessions-private-"));
+    const store = new SessionStore(dir);
+    store.upsert({ ...parsed, session: { ...parsed.session, repository: "the-keep" } });
+    store.upsert({ ...parsed, session: { ...parsed.session, id: "other", repository: "jobflow" } });
+    expect(store.repositories()).toEqual(["jobflow", "the-keep"]);
+    expect(store.count("jobflow")).toBe(1);
+    expect(store.list(50, 0, "jobflow")[0]?.repository).toBe("jobflow");
+    expect(statSync(join(dir, "sessions.db")).mode & 0o777).toBe(0o600);
+    store.close();
+  });
+
+  test("preserves existing sessions when adding repository labels", () => {
+    const dir = mkdtempSync(join(tmpdir(), "keep-sessions-old-"));
+    const db = new Database(join(dir, "sessions.db"));
+    db.run("CREATE TABLE sessions (id TEXT PRIMARY KEY, tool TEXT NOT NULL, machine TEXT NOT NULL, native_id TEXT NOT NULL, directory TEXT, branch TEXT, title TEXT, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL, cost_usd REAL, models TEXT NOT NULL)");
+    db.run("INSERT INTO sessions VALUES ('old', 'opencode', 'mac', '1', NULL, NULL, NULL, 1, 2, NULL, '[]')");
+    db.close();
+    const store = new SessionStore(dir);
+    expect(store.get("old")?.session.repository).toBeNull();
+    expect(store.count()).toBe(1);
+    store.close();
+    const oldVersion = new Database(join(dir, "sessions.db"));
+    oldVersion.run("INSERT INTO sessions VALUES ('old-code', 'opencode', 'mac', '2', NULL, NULL, NULL, 1, 2, NULL, '[]')");
+    oldVersion.close();
+    const reopened = new SessionStore(dir);
+    expect(reopened.count()).toBe(2);
+    reopened.close();
+  });
+
+  test("re-reads a source only when its size or modification time changes", () => {
+    const dir = mkdtempSync(join(tmpdir(), "keep-session-source-"));
+    const store = new SessionStore(dir);
+    expect(store.sourceUnchanged("session.jsonl", 10, 20)).toBe(false);
+    store.markSource("session.jsonl", 10, 20);
+    expect(store.sourceUnchanged("session.jsonl", 10, 20)).toBe(true);
+    expect(store.sourceUnchanged("session.jsonl", 10, 21)).toBe(false);
+    store.close();
+  });
+
+  test("keeps labels from an earlier local schema", () => {
+    const dir = mkdtempSync(join(tmpdir(), "keep-sessions-repo-"));
+    const db = new Database(join(dir, "sessions.db"));
+    db.run("CREATE TABLE sessions (id TEXT PRIMARY KEY, tool TEXT NOT NULL, machine TEXT NOT NULL, native_id TEXT NOT NULL, directory TEXT, branch TEXT, title TEXT, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL, cost_usd REAL, models TEXT NOT NULL, repository TEXT)");
+    db.run("INSERT INTO sessions VALUES ('old', 'opencode', 'mac', '1', NULL, NULL, NULL, 1, 2, NULL, '[]', 'jobflow')");
+    db.close();
+    const store = new SessionStore(dir);
+    expect(store.get("old")?.session.repository).toBe("jobflow");
     store.close();
   });
 

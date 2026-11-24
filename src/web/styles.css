@@ -1449,6 +1449,22 @@ a.button {
   margin-bottom: 8px;
 }
 
+.session-filter {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  color: var(--muted);
+}
+
+.session-filter select {
+  max-width: 100%;
+  padding: 7px 10px;
+  border: 1px solid var(--border-strong);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+
 .session-messages {
   list-style: none;
   margin: 0;
@@ -1476,6 +1492,17 @@ a.button {
   overflow-wrap: anywhere;
   font: inherit;
   font-size: 13px;
+}
+
+.session-tool {
+  margin-top: 8px;
+  padding: 8px;
+  border: 1px solid var(--border);
+}
+
+.session-tool summary {
+  color: var(--muted);
+  cursor: pointer;
 }
 
 /* Phone width: never let one wide row make the whole page scroll sideways. Wide tables scroll inside their panel. */

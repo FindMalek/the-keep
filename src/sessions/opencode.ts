@@ -1,5 +1,6 @@
 import { Database } from "bun:sqlite";
 import type { ParsedSession, SessionMessage, ToolCall } from "./types";
+import { repositoryFor } from "./repository";
 
 type Json = Record<string, any>;
 const num = (v: unknown): number => (typeof v === "number" && Number.isFinite(v) ? v : 0);
@@ -52,16 +53,16 @@ export function parseOpenCodeMessage(type: string, data: Json, seq: number): Ses
   return null;
 }
 
-/** Reads every top-level session from OpenCode's SQLite database, read-only. */
-export function readOpenCode(dbPath: string, machine: string, since = 0): ParsedSession[] {
+/** Reads sessions from OpenCode's SQLite database, read-only. */
+export function* readOpenCode(dbPath: string, machine: string, since = 0, include: (directory: string | null) => boolean = () => true, changed: (id: string, updatedAt: number) => boolean = () => true): Generator<ParsedSession> {
   const db = new Database(dbPath, { readonly: true });
   try {
     const sessions = db
-      .query("SELECT * FROM session_v2 WHERE parent_id IS NULL AND time_updated > ? ORDER BY time_created")
+      .query("SELECT s.*, p.worktree AS project_worktree FROM session_v2 s LEFT JOIN project p ON p.id = s.project_id WHERE s.time_updated > ? ORDER BY s.time_created")
       .all(since) as Json[];
     const msgs = db.query("SELECT type, data, seq FROM session_message WHERE session_id = ? ORDER BY seq");
-    const out: ParsedSession[] = [];
     for (const s of sessions) {
+      if (!include(s.directory ?? null) || !changed(s.id, s.time_updated)) continue;
       const messages: SessionMessage[] = [];
       for (const row of msgs.all(s.id) as Json[]) {
         let data: Json;
@@ -75,13 +76,14 @@ export function readOpenCode(dbPath: string, machine: string, since = 0): Parsed
       }
       if (!messages.length) continue;
       const model = s.model ? (JSON.parse(s.model) as Json) : null;
-      out.push({
+      yield {
         session: {
           id: `opencode:${machine}:${s.id}`,
           nativeId: s.id,
           tool: "opencode",
           machine,
           directory: s.directory ?? null,
+          repository: repositoryFor(s.directory ?? null) ?? repositoryFor(s.project_worktree ?? null),
           branch: null,
           title: s.title ?? null,
           startedAt: s.time_created,
@@ -92,9 +94,8 @@ export function readOpenCode(dbPath: string, machine: string, since = 0): Parsed
             : [],
         },
         messages,
-      });
+      };
     }
-    return out;
   } finally {
     db.close();
   }
