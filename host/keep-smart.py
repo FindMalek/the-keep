@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
-"""Weekly SMART health check for the box's SSDs.
+"""Daily SMART health check for the box's disks.
 
 Runs from keep-smart.service / keep-smart.timer. Writes a JSON summary that the
-dashboard reads to show disk wear and status.
+dashboard reads to show disk wear and status, and appends one line per disk to a
+history file so the dashboard can graph how each disk ages and spot it getting worse.
 """
 
 import json
@@ -13,6 +14,7 @@ import sys
 from datetime import datetime, timezone
 
 OUT = "/srv/keep-dashboard/smart.json"
+HISTORY = "/srv/keep-dashboard/smart-history.jsonl"
 
 
 def run(*args):
@@ -47,12 +49,12 @@ def attribute(out, name):
 
 
 def labelled(out, key):
-    """NVMe style `Key:   value` lines."""
+    """NVMe style `Key:   value` lines; smartctl groups thousands with commas (`1,234`)."""
     for line in out.splitlines():
         if line.startswith(key):
-            match = re.search(r"(\d+)", line.split(":", 1)[1])
+            match = re.search(r"(\d[\d,]*)", line.split(":", 1)[1])
             if match:
-                return int(match.group(1))
+                return int(match.group(1).replace(",", ""))
     return None
 
 
@@ -80,7 +82,20 @@ def info(path):
         found = attribute(out, name)
         if temperature is None and found:
             temperature = found[1]
-    return {"wearPercent": wear, "temperatureC": temperature}
+
+    # What is going wrong: SATA reallocated and pending sectors, NVMe media errors. Zero is healthy, a rising count is not.
+    reallocated = attribute(out, "Reallocated_Sector_Ct")
+    reallocated = reallocated[1] if reallocated else labelled(out, "Media and Data Integrity Errors")
+    pending = attribute(out, "Current_Pending_Sector")
+    power_on = attribute(out, "Power_On_Hours")
+    power_on = power_on[1] if power_on else labelled(out, "Power On Hours")
+    return {
+        "wearPercent": wear,
+        "temperatureC": temperature,
+        "reallocated": reallocated,
+        "pending": pending[1] if pending else None,
+        "powerOnHours": power_on,
+    }
 
 
 def main():
@@ -92,13 +107,15 @@ def main():
             **info(path),
         })
 
+    at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(f"{OUT}.tmp", "w") as handle:
-        json.dump({
-            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-            "disks": disks,
-        }, handle)
+        json.dump({"at": at, "disks": disks}, handle)
     os.replace(f"{OUT}.tmp", OUT)
+    # Append-only, one line per disk per run; nothing is ever rewritten, so a crash can at worst leave a torn last line.
+    with open(HISTORY, "a") as handle:
+        for disk in disks:
+            handle.write(json.dumps({"at": at, **disk}) + "\n")
     print(json.dumps(disks, indent=2))
 
 

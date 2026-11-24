@@ -8,7 +8,7 @@ import { collectMemory } from "./collectors/memory";
 import { collectMounts, createDiskCollector } from "./collectors/storage";
 import { createNetworkCollector } from "./collectors/network";
 import { collectSensors } from "./collectors/sensors";
-import { smart as collectSmart } from "./collectors/smart";
+import { newestRunAlerts, smart as collectSmart, smartHistory } from "./collectors/smart";
 import { createContainerCollector } from "./collectors/containers";
 import { createGarageCollector } from "./collectors/garage";
 import { checkServices } from "./collectors/services";
@@ -89,6 +89,13 @@ function every(ms: number, task: () => Promise<void>): void {
 }
 
 // Each task writes only its own fields; they finish at different times.
+const ntfyUrl = process.env.KEEP_NTFY_URL;
+async function notify(message: string): Promise<void> {
+  if (ntfyUrl) await fetch(ntfyUrl, { method: "POST", body: message, signal: AbortSignal.timeout(5000) }).catch(() => {});
+}
+/** The `at` of the last keep-smart run seen. Starts as whatever is on disk, so a restart never re-sends old alerts. */
+let smartSeenAt: string | null = collectSmart().at;
+
 every(5 * SECOND, async () => {
   [slow.mounts, slow.containers, slow.jobs, slow.usage] = await Promise.all([
     collectMounts(config.mounts),
@@ -97,6 +104,11 @@ every(5 * SECOND, async () => {
     collectUsage(config.dataDir),
   ]);
   slow.smart = collectSmart();
+  // A new daily run of keep-smart: tell me once if a disk got worse since the run before it.
+  if (slow.smart.at && slow.smart.at !== smartSeenAt) {
+    smartSeenAt = slow.smart.at;
+    for (const alert of newestRunAlerts(smartHistory(), slow.smart.at)) await notify(`disk: ${alert}`);
+  }
 });
 const collectKuma = createKumaCollector(config.kumaUrl, config.kumaKeyPath);
 every(15 * SECOND, async () => {
@@ -241,13 +253,10 @@ const server = Bun.serve({
       if (!parsed) return new Response("not found", { status: 404 });
       return params.get("as") === "markdown" ? new Response(toHandoffMarkdown(parsed), { headers: { "content-type": "text/markdown; charset=utf-8" } }) : Response.json(parsed);
     },
+    "/api/smart-history": () => Response.json(smartHistory()),
     "/api/ai-usage": {
       POST: async (request: Request) => {
         if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
-        const ntfy = process.env.KEEP_NTFY_URL;
-        const notify = async (message: string) => {
-          if (ntfy) await fetch(ntfy, { method: "POST", body: message, signal: AbortSignal.timeout(5000) }).catch(() => {});
-        };
         const entry = await recordAiUsage(config.dataDir, await request.json().catch(() => null), notify);
         if (!entry) return new Response("bad payload", { status: 400 });
         slow.jobs = await collectJobs(config.dataDir);

@@ -421,6 +421,17 @@ ul {
   grid-template-columns: minmax(110px, 1fr) auto auto;
 }
 
+.smart li .smart-facts,
+.smart li .smart-graphs {
+  grid-column: 1 / -1;
+}
+
+.smart li .smart-graphs {
+  display: grid;
+  gap: 4px;
+  min-width: 0;
+}
+
 .buckets li {
   grid-template-columns: minmax(80px, 1fr) minmax(60px, 2fr) auto 40px;
 }

@@ -53,6 +53,16 @@ export interface SmartDisk {
   health: "passed" | "failed" | "unknown";
   wearPercent: number | null;
   temperatureC: number | null;
+  /** SATA reallocated sectors, NVMe media errors. Zero is healthy; a rising count is not. */
+  reallocated?: number | null;
+  /** SATA sectors waiting to be reallocated. */
+  pending?: number | null;
+  powerOnHours?: number | null;
+}
+
+/** One line of `smart-history.jsonl`: one disk at one daily run of `keep-smart`. */
+export interface SmartHistoryRow extends SmartDisk {
+  at: string;
 }
 
 export interface SmartStats {
