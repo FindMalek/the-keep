@@ -8,11 +8,24 @@ type Page<T> = { data: T[]; nextCursor?: string | null };
 
 const empty = (status: N8nStats["status"]): N8nStats => ({ status, workflows: [], executions: [], executionsAvailable: false, truncated: false });
 
+async function hostReading(dataDir: string): Promise<N8nStats> {
+  const text = await readText(`${dataDir}/n8n-status.json`);
+  if (!text) return empty("not configured");
+  try {
+    const data = JSON.parse(text) as N8nStats & { updatedAt?: number };
+    const age = Date.now() - (data.updatedAt ?? 0);
+    if (data.status !== "connected" || age < -60_000 || age > 180_000 || !Array.isArray(data.workflows) || !Array.isArray(data.executions)) return empty("unreachable");
+    return { status: "connected", workflows: data.workflows, executions: data.executions, executionsAvailable: data.executionsAvailable, truncated: data.truncated };
+  } catch {
+    return empty("unreachable");
+  }
+}
+
 export async function collectN8n(baseUrl: string | null, dataDir: string): Promise<N8nStats> {
-  if (!baseUrl) return empty("not configured");
+  if (!baseUrl) return hostReading(dataDir);
   const env = (await readText(`${dataDir}/integrations.env`)) ?? "";
   const key = process.env.N8N_API_KEY ?? /^N8N_API_KEY=(.+)$/m.exec(env)?.[1]?.trim();
-  if (!key) return empty("not configured");
+  if (!key) return hostReading(dataDir);
 
   const get = async <T>(path: string): Promise<T> => {
     const response = await fetch(`${baseUrl.replace(/\/$/, "")}/api/v1/${path}`, {
@@ -54,6 +67,7 @@ export async function collectN8n(baseUrl: string | null, dataDir: string): Promi
       executions: (executions?.data ?? []).map((run) => ({ id: run.id, workflowId: run.workflowId, status: run.status, mode: run.mode, startedAt: run.startedAt, stoppedAt: run.stoppedAt })),
     };
   } catch {
-    return empty("unreachable");
+    const host = await hostReading(dataDir);
+    return host.status === "connected" ? host : empty("unreachable");
   }
 }

@@ -32,3 +32,13 @@ test("reads paginated workflows without leaking node parameters and tolerates mi
     else process.env.N8N_API_KEY = previousKey;
   }
 });
+
+test("uses fresh host metadata and rejects stale readings", async () => {
+  const dir = await mkdtemp(`${tmpdir()}/keep-n8n-host-`);
+  const path = `${dir}/n8n-status.json`;
+  const reading = { status: "connected", updatedAt: Date.now(), workflows: [], executions: [], executionsAvailable: true, truncated: false };
+  await Bun.write(path, JSON.stringify(reading));
+  expect((await collectN8n(null, dir)).status).toBe("connected");
+  await Bun.write(path, JSON.stringify({ ...reading, updatedAt: Date.now() - 181_000 }));
+  expect((await collectN8n(null, dir)).status).toBe("unreachable");
+});

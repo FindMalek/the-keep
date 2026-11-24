@@ -23,3 +23,13 @@ test("summarizes plans and excludes forgotten snapshots", async () => {
     globalThis.fetch = previous;
   }
 });
+
+test("uses fresh local snapshot metadata and rejects stale readings", async () => {
+  const dir = await mkdtemp(`${tmpdir()}/keep-backrest-host-`);
+  const path = `${dir}/backrest-status.json`;
+  const reading = { status: "connected", updatedAt: Date.now(), plans: [], snapshots: [], snapshotsAvailable: true };
+  await Bun.write(path, JSON.stringify(reading));
+  expect((await collectBackrest(null, dir)).source).toBe("host");
+  await Bun.write(path, JSON.stringify({ ...reading, updatedAt: Date.now() - 1_800_001 }));
+  expect((await collectBackrest(null, dir)).status).toBe("unreachable");
+});

@@ -262,7 +262,8 @@ export interface N8nStats {
 
 export interface BackrestStats {
   status: "not configured" | "unreachable" | "connected";
-  plans: { id: string; snapshots: number; protectedBytes: number; success: number; warning: number; failed: number; nextAt: number | null }[];
+  source?: "host" | "api";
+  plans: { id: string; snapshots: number; protectedBytes: number | null; success: number | null; warning: number | null; failed: number | null; nextAt: number | null }[];
   snapshotsAvailable: boolean;
   snapshots: { id: string; plan: string; repo: string; at: number }[];
 }

@@ -7,8 +7,21 @@ type Operation = { snapshotId?: string; planId?: string; repoId?: string; unixTi
 const empty = (status: BackrestStats["status"]): BackrestStats => ({ status, plans: [], snapshotsAvailable: false, snapshots: [] });
 const number = (value: string | undefined): number => Number(value) || 0;
 
+async function hostReading(dataDir: string): Promise<BackrestStats> {
+  const text = await readText(`${dataDir}/backrest-status.json`);
+  if (!text) return empty("not configured");
+  try {
+    const data = JSON.parse(text) as BackrestStats & { updatedAt?: number };
+    const age = Date.now() - (data.updatedAt ?? 0);
+    if (data.status !== "connected" || age < -60_000 || age > 1_800_000 || !Array.isArray(data.plans) || !Array.isArray(data.snapshots)) return empty("unreachable");
+    return { status: "connected", source: "host", plans: data.plans, snapshots: data.snapshots, snapshotsAvailable: data.snapshotsAvailable };
+  } catch {
+    return empty("unreachable");
+  }
+}
+
 export async function collectBackrest(baseUrl: string | null, dataDir: string): Promise<BackrestStats> {
-  if (!baseUrl) return empty("not configured");
+  if (!baseUrl) return hostReading(dataDir);
   const env = (await readText(`${dataDir}/integrations.env`)) ?? "";
   const read = (name: string) => process.env[name] ?? new RegExp(`^${name}=(.*)$`, "m").exec(env)?.[1]?.trim();
   const user = read("BACKREST_USER");
@@ -27,11 +40,13 @@ export async function collectBackrest(baseUrl: string | null, dataDir: string): 
     ]);
     return {
       status: "connected",
+      source: "api",
       plans: (summary.planSummaries ?? []).map((plan) => ({ id: plan.id, snapshots: number(plan.totalSnapshots), protectedBytes: number(plan.protectedBytes), success: number(plan.backupsSuccessLast30days), warning: number(plan.backupsWarningLast30days), failed: number(plan.backupsFailed30days), nextAt: number(plan.nextBackupTimeMs) || null })),
       snapshotsAvailable: operations !== null,
       snapshots: (operations?.operations ?? []).filter((op) => op.operationIndexSnapshot && !op.operationIndexSnapshot.forgot && op.snapshotId).map((op) => ({ id: op.snapshotId!, plan: op.planId ?? "", repo: op.repoId ?? "", at: number(op.unixTimeStartMs) })).sort((a, b) => b.at - a.at).slice(0, 10),
     };
   } catch {
-    return empty("unreachable");
+    const host = await hostReading(dataDir);
+    return host.status === "connected" ? host : empty("unreachable");
   }
 }

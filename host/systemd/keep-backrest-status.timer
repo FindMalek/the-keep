@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh local Backrest snapshot metadata
+
+[Timer]
+OnBootSec=45s
+OnUnitActiveSec=15min
+
+[Install]
+WantedBy=timers.target

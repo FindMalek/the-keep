@@ -111,7 +111,11 @@ Files the host side writes into `DATA_DIR` (all JSON): `jobs.json` and `activity
 
 The n8n panel lists at most 300 workflows and the latest 50 execution records. It sends only node names, types, positions and connections to the browser, not node parameters or execution payloads. It does not execute workflows: n8n's public API does not provide a general run-by-ID endpoint. Run workflows through an appropriate n8n trigger until an explicitly authorized execution integration is configured.
 
+Alternatively, install `host/keep-n8n-status.py` as `/usr/local/bin/keep-n8n-status`, configure `KEEP_N8N_DB_CONTAINER` in `/etc/keep-dashboard-n8n.env`, and enable `keep-n8n-status.timer`. The host collector reads n8n's database in a read-only transaction and writes a mode-0600, metadata-only file to `DATA_DIR`. The dashboard treats it as unavailable if it is older than three minutes. This fallback depends on n8n's database schema and must be checked when n8n is upgraded.
+
 Backrest summaries come from `GetSummaryDashboard`; recent snapshot IDs come from indexed snapshot operations among the latest 200 operations. The list is not a complete inventory and does not verify that a restore will work.
+
+For a local restic repository, `host/keep-backrest-status.py` can instead list snapshots without a Backrest login. Install it as `/usr/local/bin/keep-backrest-status`, configure `KEEP_BACKREST_CONFIG`, `KEEP_BACKREST_CONTAINER`, and `KEEP_BACKREST_REPO_ID` in `/etc/keep-dashboard-backrest.env`, and enable `keep-backrest-status.timer`. The host-only collector reads the repository password from Backrest's configuration and writes snapshot metadata, not credentials or paths, to a mode-0600 file. Its results expire after 30 minutes and do not report backup execution health.
 
 ## Develop
 
