@@ -1,0 +1,9 @@
+[Unit]
+Description=Watch for n8n workflow requests
+
+[Path]
+PathExistsGlob=/srv/keep-dashboard/n8n-requests/*.json
+Unit=keep-n8n-actions.service
+
+[Install]
+WantedBy=multi-user.target

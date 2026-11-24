@@ -1697,7 +1697,7 @@ a.button {
 }
 
 .workflow-detail { min-width: 0; }
-.workflow-heading { display: flex; align-items: center; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
+.workflow-heading { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 12px; border-bottom: 1px solid var(--border); }
 .workflow-canvas-scroll { overflow: auto; max-height: 420px; }
 .workflow-canvas { position: relative; min-width: 100%; min-height: 140px; background-image: radial-gradient(var(--border-strong) 0.8px, transparent 0.8px); background-size: 18px 18px; }
 .workflow-canvas svg { position: absolute; inset: 0; pointer-events: none; }

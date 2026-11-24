@@ -254,10 +254,12 @@ export interface N8nStats {
     id: string;
     name: string;
     active: boolean;
+    runnable?: boolean;
     nodes: { name: string; type: string; x: number; y: number; disabled: boolean }[];
     edges: { from: string; to: string }[];
   }[];
   executions: { id: string; workflowId: string; status: string; mode: string; startedAt: string | null; stoppedAt: string | null }[];
+  actions?: { workflowId: string | null; status: string; at: string }[];
 }
 
 export interface BackrestStats {

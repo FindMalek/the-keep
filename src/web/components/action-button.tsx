@@ -8,13 +8,14 @@ interface ActionButtonProps {
   /** Destructive actions need a second click within a few seconds. */
   confirm?: string;
   danger?: boolean;
+  endpoint?: string;
 }
 
 const CONFIRM_WINDOW_MS = 4000;
 
-async function send(action: string): Promise<boolean> {
+async function send(action: string, endpoint: string): Promise<boolean> {
   try {
-    const response = await fetch("/api/actions", {
+    const response = await fetch(endpoint, {
       method: "POST",
       headers: { "content-type": "application/json", "x-keep-action": "1" },
       body: JSON.stringify({ action }),
@@ -25,7 +26,7 @@ async function send(action: string): Promise<boolean> {
   }
 }
 
-export function ActionButton({ action, label, confirm, danger = false }: ActionButtonProps) {
+export function ActionButton({ action, label, confirm, danger = false, endpoint = "/api/actions" }: ActionButtonProps) {
   const [state, setState] = useState<State>("idle");
 
   useEffect(() => {
@@ -40,7 +41,7 @@ export function ActionButton({ action, label, confirm, danger = false }: ActionB
       return;
     }
     setState("sending");
-    setState((await send(action)) ? "sent" : "error");
+    setState((await send(action, endpoint)) ? "sent" : "error");
   }
 
   const text = { idle: label, confirm: confirm ?? label, sending: "sending…", sent: "requested", error: "failed" }[state];

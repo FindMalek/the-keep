@@ -110,9 +110,11 @@ Files the host side writes into `DATA_DIR` (all JSON): `jobs.json` and `activity
 `cleanup-runs.json`, `tidy.json`, and optionally `usage.json` (per-app space against limits) and
 `music-import.json` — the shapes are the `*Stats` types in [`src/shared/types.ts`](src/shared/types.ts).
 
-The n8n panel lists at most 300 workflows and the latest 50 execution records. It sends only node names, types, positions and connections to the browser, not node parameters or execution payloads. It does not execute workflows: n8n's public API does not provide a general run-by-ID endpoint. Run workflows through an appropriate n8n trigger until an explicitly authorized execution integration is configured.
+The n8n panel lists at most 300 workflows and the latest 50 execution records. It sends only node names, types, positions and connections to the browser, not node parameters or execution payloads. Running workflows uses an optional host-side allowlist; the public n8n API does not provide a general run-by-ID endpoint.
 
 Alternatively, install `host/keep-n8n-status.py` as `/usr/local/bin/keep-n8n-status`, configure `KEEP_N8N_DB_CONTAINER` in `/etc/keep-dashboard-n8n.env`, and enable `keep-n8n-status.timer`. The host collector reads n8n's database in a read-only transaction and writes a mode-0600, metadata-only file to `DATA_DIR`. The dashboard treats it as unavailable if it is older than three minutes. This fallback depends on n8n's database schema and must be checked when n8n is upgraded.
+
+To enable selected runs, install `host/keep-n8n-actions.py` as `/usr/local/bin/keep-n8n-actions`, install the matching systemd service and path unit, and create `/srv/keep-dashboard/n8n-requests` as root with mode 0700. Put `{"container":"n8n-container-name","allowed":["workflow-id"]}` in root-owned `/etc/keep-dashboard-n8n-actions.json` with mode 0600, then enable `keep-n8n-actions.path`. Only IDs in that file can be dispatched, and a button needs confirmation. `dispatched` means the CLI was started, not that the workflow succeeded. Leave destructive workflows out of the allowlist.
 
 Backrest summaries come from `GetSummaryDashboard`; recent snapshot IDs come from indexed snapshot operations among the latest 200 operations. The list is not a complete inventory and does not verify that a restore will work.
 

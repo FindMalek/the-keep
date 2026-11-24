@@ -16,7 +16,7 @@ import { collectHost, publicIp, resolveIp } from "./collectors/system";
 import { createAppsCollector } from "./collectors/apps";
 import { collectJobs, collectUsage, requestAction } from "./collectors/jobs";
 import { recordAiUsage } from "./collectors/ai-usage";
-import { collectN8n } from "./collectors/n8n";
+import { collectN8n, requestN8nRun } from "./collectors/n8n";
 import { collectBackrest } from "./collectors/backrest";
 import { SessionStore } from "./sessions/store";
 import { toHandoffMarkdown } from "./sessions/export";
@@ -261,7 +261,23 @@ const server = Bun.serve({
         return new Response(null, { status: 202 });
       },
     },
-    "/api/n8n": async () => Response.json(await collectN8n(process.env.N8N_URL ?? null, config.dataDir)),
+    "/api/n8n": async () => {
+      const stats = await collectN8n(process.env.N8N_URL ?? null, config.dataDir);
+      let actions: { workflowId: string | null; status: string; at: string }[] = [];
+      try {
+        const history = JSON.parse((await readText(`${config.dataDir}/n8n-action-history.json`)) ?? "[]");
+        if (Array.isArray(history)) actions = history.slice(0, 50).filter((item) => item && typeof item.status === "string" && typeof item.at === "string").map((item) => ({ workflowId: typeof item.workflowId === "string" ? item.workflowId : null, status: item.status, at: item.at }));
+      } catch { /* history is optional */ }
+      return Response.json({ ...stats, actions });
+    },
+    "/api/n8n/run": {
+      POST: async (request: Request) => {
+        if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
+        const body = await request.json().catch(() => null) as { action?: unknown } | null;
+        if (typeof body?.action !== "string" || !(await requestN8nRun(config.dataDir, body.action))) return new Response("workflow not enabled", { status: 400 });
+        return new Response(null, { status: 202 });
+      },
+    },
     "/api/backrest": async () => Response.json(await collectBackrest(process.env.BACKREST_URL ?? null, config.dataDir)),
     "/api/history": (request: Request) => {
       const params = new URL(request.url).searchParams;

@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import type { N8nStats } from "../../shared/types";
 import { since } from "../lib/time";
 import { Chip } from "./chip";
+import { ActionButton } from "./action-button";
 
 type Workflow = N8nStats["workflows"][number];
 
@@ -94,10 +95,17 @@ function WorkflowContent({ data, workflow, onSelect, names }: {
           </button>)}
         </div>
         <div className="workflow-detail">
-          {workflow && <><div className="workflow-heading"><strong>{workflow.name}</strong><Chip tone={workflow.active ? "solid" : "plain"}>{workflow.active ? "active" : "inactive"}</Chip></div><WorkflowGraph workflow={workflow} /></>}
+          {workflow && <><div className="workflow-heading"><strong>{workflow.name}</strong><Chip tone={workflow.active ? "solid" : "plain"}>{workflow.active ? "active" : "inactive"}</Chip>{workflow.runnable && <ActionButton endpoint="/api/n8n/run" action={`run-n8n:${workflow.id}`} label="run workflow" confirm="click again to run" danger />}</div><WorkflowGraph workflow={workflow} /></>}
         </div>
       </div>
-      <p className="muted small">Execution from the dashboard is not configured. Use a supported n8n trigger; workflows may change production data.</p>
+      <p className="muted small">Only explicitly allowed workflows can run here. Running a workflow may change data; check recent executions for the outcome.</p>
+      {!!data.actions?.length && <><h3 className="subhead">dashboard requests</h3><table className="table"><tbody>
+        {data.actions.slice(0, 10).map((action, index) => <tr key={`${action.at}-${index}`}>
+          <td>{action.workflowId ? names.get(action.workflowId) ?? action.workflowId : "invalid request"}</td>
+          <td>{action.status === "dispatched" ? "sent to n8n · outcome not confirmed" : action.status}</td>
+          <td className="right muted">{!Number.isNaN(Date.parse(action.at)) ? since(Date.parse(action.at)) : "—"}</td>
+        </tr>)}
+      </tbody></table></>}
       <h3 className="subhead">recent executions · metadata only</h3>
       <ExecutionList data={data} names={names} />
     </>

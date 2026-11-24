@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test";
-import { mkdtemp } from "node:fs/promises";
+import { mkdtemp, readdir } from "node:fs/promises";
 import { tmpdir } from "node:os";
-import { collectN8n } from "./n8n";
+import { collectN8n, requestN8nRun } from "./n8n";
 
 test("reads paginated workflows without leaking node parameters and tolerates missing execution access", async () => {
   const dir = await mkdtemp(`${tmpdir()}/keep-n8n-`);
@@ -41,4 +41,16 @@ test("uses fresh host metadata and rejects stale readings", async () => {
   expect((await collectN8n(null, dir)).status).toBe("connected");
   await Bun.write(path, JSON.stringify({ ...reading, updatedAt: Date.now() - 181_000 }));
   expect((await collectN8n(null, dir)).status).toBe("unreachable");
+});
+
+test("queues only workflows enabled by fresh host metadata", async () => {
+  const dir = await mkdtemp(`${tmpdir()}/keep-n8n-request-`);
+  await Bun.write(`${dir}/n8n-status.json`, JSON.stringify({ status: "connected", updatedAt: Date.now(), executions: [], workflows: [
+    { id: "safe", name: "safe", active: true, runnable: true, nodes: [], edges: [] },
+    { id: "other", name: "other", active: true, runnable: false, nodes: [], edges: [] },
+  ] }));
+  expect(await requestN8nRun(dir, "run-n8n:safe;reboot")).toBe(false);
+  expect(await requestN8nRun(dir, "run-n8n:other")).toBe(false);
+  expect(await requestN8nRun(dir, "run-n8n:safe")).toBe(true);
+  expect((await readdir(`${dir}/n8n-requests`)).filter((name) => name.endsWith(".json"))).toHaveLength(1);
 });

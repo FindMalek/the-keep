@@ -1,0 +1,8 @@
+[Unit]
+Description=Dispatch allowed n8n workflow requests
+RequiresMountsFor=/srv
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/keep-n8n-actions

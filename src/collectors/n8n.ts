@@ -1,4 +1,6 @@
 import { readText } from "../lib/host";
+import { randomUUID } from "node:crypto";
+import { mkdir, rename } from "node:fs/promises";
 import type { N8nStats } from "../shared/types";
 
 type Node = { name: string; type: string; position?: number[]; disabled?: boolean };
@@ -19,6 +21,19 @@ async function hostReading(dataDir: string): Promise<N8nStats> {
   } catch {
     return empty("unreachable");
   }
+}
+
+export async function requestN8nRun(dataDir: string, action: string): Promise<boolean> {
+  const match = /^run-n8n:([A-Za-z0-9_-]{1,100})$/.exec(action);
+  if (!match) return false;
+  const data = await hostReading(dataDir);
+  if (data.status !== "connected" || !data.workflows.some((workflow) => workflow.id === match[1] && workflow.runnable)) return false;
+  const dir = `${dataDir}/n8n-requests`;
+  await mkdir(dir, { recursive: true, mode: 0o700 });
+  const path = `${dir}/${Date.now()}-${randomUUID()}`;
+  await Bun.write(`${path}.tmp`, JSON.stringify({ workflowId: match[1] }));
+  await rename(`${path}.tmp`, `${path}.json`);
+  return true;
 }
 
 export async function collectN8n(baseUrl: string | null, dataDir: string): Promise<N8nStats> {
@@ -46,6 +61,8 @@ export async function collectN8n(baseUrl: string | null, dataDir: string): Promi
       if (!cursor) break;
     }
     const executions = await get<Page<Execution>>("executions?limit=50").catch(() => null);
+    const host = await hostReading(dataDir);
+    const allowed = new Set(host.status === "connected" ? host.workflows.filter((workflow) => workflow.runnable).map((workflow) => workflow.id) : []);
     return {
       status: "connected",
       truncated: !!cursor,
@@ -54,6 +71,7 @@ export async function collectN8n(baseUrl: string | null, dataDir: string): Promi
         id: workflow.id,
         name: workflow.name,
         active: workflow.active,
+        runnable: allowed.has(workflow.id),
         nodes: (workflow.nodes ?? []).map((node, index) => ({
           name: node.name,
           type: node.type,

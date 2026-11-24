@@ -4,11 +4,13 @@
 import json
 import os
 import subprocess
+import stat
 import tempfile
 import time
 
 DATA = os.environ.get("KEEP_DATA", "/srv/keep-dashboard")
 CONTAINER = os.environ.get("KEEP_N8N_DB_CONTAINER", "")
+RUN_CONFIG = "/etc/keep-dashboard-n8n-actions.json"
 
 WORKFLOWS = '''SELECT coalesce(json_agg(row_to_json(w)), '[]'::json) FROM (
   SELECT id, name, active, nodes, connections FROM workflow_entity
@@ -31,7 +33,22 @@ def query(sql):
     return json.loads(result.stdout)
 
 
-def workflow_view(workflow):
+def allowed_workflows():
+    try:
+        fd = os.open(RUN_CONFIG, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK)
+        with os.fdopen(fd) as handle:
+            info = os.fstat(handle.fileno())
+            if not stat.S_ISREG(info.st_mode) or info.st_uid != 0 or info.st_mode & 0o022:
+                return set()
+            data = json.load(handle)
+        if not isinstance(data, dict) or not isinstance(data.get("allowed"), list):
+            return set()
+        return {value for value in data["allowed"] if isinstance(value, str)}
+    except (OSError, ValueError, TypeError):
+        return set()
+
+
+def workflow_view(workflow, allowed=()):
     nodes = []
     for index, node in enumerate(workflow.get("nodes") or []):
         position = node.get("position") or []
@@ -44,14 +61,15 @@ def workflow_view(workflow):
             for targets in outputs:
                 for target in targets or []:
                     edges.append({"from": source, "to": target.get("node", "")})
-    return {"id": workflow["id"], "name": workflow["name"], "active": workflow["active"], "nodes": nodes, "edges": edges}
+    return {"id": workflow["id"], "name": workflow["name"], "active": workflow["active"], "runnable": workflow["id"] in allowed, "nodes": nodes, "edges": edges}
 
 
 def main():
     workflows = query(WORKFLOWS)
     executions = query(EXECUTIONS)
+    allowed = allowed_workflows()
     result = {"status": "connected", "updatedAt": int(time.time() * 1000), "truncated": len(workflows) > 300,
-              "executionsAvailable": True, "workflows": [workflow_view(w) for w in workflows[:300]], "executions": executions}
+              "executionsAvailable": True, "workflows": [workflow_view(w, allowed) for w in workflows[:300]], "executions": executions}
     os.makedirs(DATA, exist_ok=True)
     fd, path = tempfile.mkstemp(prefix=".n8n-status-", dir=DATA)
     try:
