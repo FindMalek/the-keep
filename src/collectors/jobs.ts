@@ -33,9 +33,9 @@ export async function collectUsage(dataDir: string): Promise<UsageStats> {
 }
 
 /** Queues an action for `keep-agent` on the host; returns false for anything not on the list. */
-export async function requestAction(dataDir: string, action: string): Promise<boolean> {
+export async function requestAction(dataDir: string, action: string, requestedBy: string | null = null): Promise<boolean> {
   if (!ALLOWED.test(action)) return false;
   await mkdir(`${dataDir}/requests`, { recursive: true });
-  await Bun.write(`${dataDir}/requests/${Date.now()}-${randomUUID().slice(0, 8)}.json`, JSON.stringify({ action }));
+  await Bun.write(`${dataDir}/requests/${Date.now()}-${randomUUID().slice(0, 8)}.json`, JSON.stringify({ action, requestedBy }));
   return true;
 }

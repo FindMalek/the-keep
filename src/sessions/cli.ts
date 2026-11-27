@@ -113,7 +113,7 @@ async function push(): Promise<void> {
     // first run
   }
   let sent = 0;
-  for (const row of store.list(100_000)) {
+  for (const row of store.index()) {
     if ((pushed[row.id] ?? 0) >= row.endedAt) continue;
     const parsed = store.get(row.id)!;
     const res = await fetch(`${url}/api/sessions`, {
@@ -153,9 +153,9 @@ function need(id: string | undefined) {
 
 if (cmd === "ingest") ingest();
 else if (cmd === "list") {
-  for (const s of store.list(Number(flag("limit") ?? 20)))
+  for (const s of store.list({ limit: Number(flag("limit") ?? 20) }))
     console.log(
-      `${s.id}  ${new Date(s.startedAt).toISOString().slice(0, 16)}  ${String(s.messageCount).padStart(4)} msgs  ${(s.tokensIn + s.tokensOut).toLocaleString()} tok  ${s.costUsd == null ? "-" : `$${s.costUsd.toFixed(2)}`}  ${s.title ?? ""}`,
+      `${s.id}  ${new Date(s.startedAt).toISOString().slice(0, 16)}  ${String(s.messageCount).padStart(4)} msgs  ${(s.tokensIn + s.tokensOut + s.cacheRead + s.cacheWrite).toLocaleString()} tok  ${s.costUsd == null ? "-" : `$${s.costUsd.toFixed(2)}`}  ${s.title ?? ""}`,
     );
 } else if (cmd === "export") exportTo(need(args[0]), args[1]);
 else if (cmd === "push") {

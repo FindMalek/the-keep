@@ -18,8 +18,9 @@ import { createAppsCollector } from "./collectors/apps";
 import { collectJobs, collectUsage, requestAction } from "./collectors/jobs";
 import { recordAiUsage } from "./collectors/ai-usage";
 import { SessionStore } from "./sessions/store";
-import { toHandoffMarkdown } from "./sessions/export";
-import { isParsedSession } from "./sessions/validate";
+import { createJournal } from "./collectors/logs";
+import { createGarageS3 } from "./collectors/garage-s3";
+import { apiRoutes, PAGE_PATHS } from "./routes";
 import { createKumaCollector } from "./collectors/kuma";
 import { createHomeCollector } from "./collectors/home";
 import { ViewerLog } from "./lib/viewers";
@@ -93,7 +94,7 @@ function every(ms: number, task: () => Promise<void>): void {
 // Each task writes only its own fields; they finish at different times.
 every(5 * SECOND, async () => {
   [slow.mounts, slow.containers, slow.jobs, slow.usage] = await Promise.all([
-    collectMounts(config.mounts),
+    collectMounts(config.mounts, config.backupMounts),
     collectContainers(),
     collectJobs(config.dataDir),
     collectUsage(config.dataDir),
@@ -202,48 +203,36 @@ async function tick(): Promise<void> {
 every(SECOND, tick);
 
 const sessionStore = new SessionStore(config.dataDir);
+every(24 * 3600 * SECOND, async () => {
+  await sessionStore.prices.refresh(sessionStore.providers());
+});
+const journal = createJournal({ command: config.journalctl, directory: config.journalDir });
+const garageS3 = config.garageS3 ? createGarageS3(config.garageS3) : null;
 
 const server = Bun.serve({
   port: config.port,
   development: process.env.NODE_ENV !== "production",
   routes: gated({
-    "/": index,
-    "/apps": index,
-    "/system": index,
-    "/jobs": index,
-    "/activity": index,
-    "/sessions": index,
-    "/media": index,
-    "/overview": index,
-    "/uptime": index,
+    ...Object.fromEntries(PAGE_PATHS.map((path) => [path, index])),
+    ...apiRoutes({
+      sessions: sessionStore,
+      journal,
+      jobNames: () => slow.jobs.jobs.map((job) => job.name),
+      buckets: () => garageS3,
+      bucketNames: () => slow.garage.buckets.map((bucket) => bucket.name),
+    }),
     "/api/actions": {
       POST: async (request: Request) => {
         // A custom header forces a CORS preflight, so other sites can't trigger actions from your browser.
         if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
         const body = (await request.json().catch(() => null)) as { action?: unknown } | null;
-        const accepted = typeof body?.action === "string" && (await requestAction(config.dataDir, body.action));
+        const requester = request.headers.get("x-real-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+        const accepted = typeof body?.action === "string" && (await requestAction(config.dataDir, body.action, requester));
         if (!accepted) return new Response("unknown action", { status: 400 });
         // Pick up the agent's result quickly instead of waiting for the next 5 s refresh.
         setTimeout(async () => (slow.jobs = await collectJobs(config.dataDir)), 3000);
         return new Response(null, { status: 202 });
       },
-    },
-    "/api/sessions": {
-      GET: () => Response.json({ sessions: sessionStore.list(200), usage: sessionStore.usageByDay(Date.now() - 90 * 86_400_000) }),
-      POST: async (request: Request) => {
-        if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
-        const body = await request.json().catch(() => null);
-        const batch = Array.isArray(body) ? body : [body];
-        if (!batch.length || !batch.every(isParsedSession)) return new Response("bad payload", { status: 400 });
-        for (const parsed of batch) sessionStore.upsert(parsed);
-        return new Response(null, { status: 202 });
-      },
-    },
-    "/api/session": (request: Request) => {
-      const params = new URL(request.url).searchParams;
-      const parsed = sessionStore.get(params.get("id") ?? "");
-      if (!parsed) return new Response("not found", { status: 404 });
-      return params.get("as") === "markdown" ? new Response(toHandoffMarkdown(parsed), { headers: { "content-type": "text/markdown; charset=utf-8" } }) : Response.json(parsed);
     },
     "/api/ai-usage": {
       POST: async (request: Request) => {
@@ -271,8 +260,8 @@ const server = Bun.serve({
       const from = Number(params.get("from"));
       const to = Number(params.get("to"));
       // A bar's worth of detail, not a dump of the database.
-      if (!key || !Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 2 * 3600)
-        return new Response("key, from, to (at most 2 h)", { status: 400 });
+      if (!key || !Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 8 * 3600)
+        return new Response("key, from, to (at most 8 h)", { status: 400 });
       return Response.json(historyDb.minutes(key, from, to));
     },
     "/api/activity": async () => {

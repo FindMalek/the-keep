@@ -74,6 +74,10 @@ def now_iso():
     return datetime.now(timezone.utc).isoformat(timespec="seconds")
 
 
+def now_iso_at(unix_seconds):
+    return datetime.fromtimestamp(unix_seconds, timezone.utc).isoformat(timespec="seconds")
+
+
 def show(unit, *props):
     out = subprocess.run(
         ["systemctl", "show", unit, "--timestamp=unix", *[f"-p{p}" for p in props]],
@@ -272,55 +276,93 @@ def write_json(path, value):
     os.replace(tmp, path)
 
 
-def log_action(action, status, detail):
+def log_action(action, status, detail, **extra):
     try:
         with open(ACTIONS_LOG) as handle:
             history = json.load(handle)
     except (OSError, ValueError):
         history = []
-    history = ([{"action": action, "at": now_iso(), "status": status, "detail": detail}] + history)[:20]
+    entry = {"action": action, "at": now_iso(), "status": status, "detail": detail}
+    entry.update({key: value for key, value in extra.items() if value is not None})
+    history = ([entry] + history)[:20]
     write_json(ACTIONS_LOG, history)
 
 
+def tail(text, lines=40, limit=4096):
+    """The last lines a command printed, small enough for actions.json."""
+    kept = "\n".join(text.strip().splitlines()[-lines:])
+    return kept[-limit:] or None
+
+
+def unit_output(unit, since):
+    out = subprocess.run(
+        ["journalctl", "-u", unit, "--since", f"@{int(since)}", "-o", "cat", "--no-pager", "-n", "40"],
+        capture_output=True, text=True,
+    ).stdout
+    return tail(out)
+
+
+def freed_by_tidy(since):
+    try:
+        with open(f"{DATA}/tidy.json") as handle:
+            summary = json.load(handle)
+        if datetime.fromisoformat(summary["at"]).timestamp() >= since - 5:
+            return summary.get("freedBytes")
+    except (OSError, ValueError, KeyError):
+        pass
+    return None
+
+
 def handle_action(action):
+    """Returns (status, detail, extra) where extra holds exitCode, output and freedBytes when known."""
     if action == "reboot":
         uptime = float(open("/proc/uptime").read().split()[0])
         if uptime < MIN_UPTIME_FOR_REBOOT_SEC:
-            return log_action(action, "refused", "booted less than 5 minutes ago")
-        log_action(action, "done", "rebooting now")
-        write_status()
-        subprocess.run(["systemctl", "reboot"])
-        return None
+            return "refused", "booted less than 5 minutes ago", {}
+        return "done", "rebooting now", {}
     if action == "tidy":
+        started = time.time()
         result = subprocess.run(["systemctl", "start", "keep-tidy.service"], capture_output=True, text=True)
-        return log_action(action, "done" if result.returncode == 0 else "failed", result.stderr.strip() or "finished")
+        return ("done" if result.returncode == 0 else "failed", result.stderr.strip() or "finished",
+                {"exitCode": result.returncode, "output": unit_output("keep-tidy.service", started), "freedBytes": freed_by_tidy(started)})
     if action.startswith("run:") and action[4:] in JOBS:
         unit = f"{action[4:]}.service"
         result = subprocess.run(["systemctl", "start", "--no-block", unit], capture_output=True, text=True)
-        return log_action(action, "done" if result.returncode == 0 else "failed", result.stderr.strip() or "started")
+        # --no-block returns at once; the run's own log is on the jobs page.
+        return "done" if result.returncode == 0 else "failed", result.stderr.strip() or "started", {"exitCode": result.returncode}
     verb, _, name = action.partition(":")
     if verb in ("start", "stop") and name in SWITCHES:
         container, _ = switch_container(name)
         if not container:
-            return log_action(action, "failed", "needs exactly one matching container")
+            return "failed", "needs exactly one matching container", {}
         try:
             # Stopping waits for the app's own shutdown (minecraft saves the world first).
             result = subprocess.run(["docker", verb, container], capture_output=True, text=True, timeout=150)
         except subprocess.TimeoutExpired:
-            return log_action(action, "failed", "docker didn't answer")
-        return log_action(action, "done" if result.returncode == 0 else "failed", result.stderr.strip() or ("started" if verb == "start" else "stopped"))
-    return log_action(action[:60], "refused", "unknown action")
+            return "failed", "docker didn't answer", {}
+        return ("done" if result.returncode == 0 else "failed", result.stderr.strip() or ("started" if verb == "start" else "stopped"),
+                {"exitCode": result.returncode, "output": tail(result.stdout + result.stderr)})
+    return "refused", "unknown action", {}
 
 
 def process():
     for path in sorted(glob.glob(f"{REQUESTS}/*.json")):
         try:
             with open(path) as handle:
-                action = str(json.load(handle).get("action", ""))
-        except (OSError, ValueError):
-            action = "unreadable request"
+                request = json.load(handle)
+            action = str(request.get("action", ""))
+            requested_by = str(request.get("requestedBy") or "")[:64] or None
+        except (OSError, ValueError, AttributeError):
+            action, requested_by = "unreadable request", None
         os.remove(path)
-        handle_action(action)
+        started = time.time()
+        status, detail, extra = handle_action(action)
+        log_action(action[:60], status, detail, requestedBy=requested_by, startedAt=now_iso_at(started),
+                   durationSec=round(time.time() - started, 1), **extra)
+        if action == "reboot" and status == "done":
+            write_status()
+            subprocess.run(["systemctl", "reboot"])
+            return
     write_status()
 
 

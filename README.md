@@ -18,26 +18,23 @@ CPU to containers, uptime to ad blocking, jobs you can run and a log of who logg
 
 | Page | |
 |---|---|
-| **home** | Eight tiles (cpu, memory, data disk, temperature, network, sites up, ads blocked, internet speed), then cpu per core with clock and load, memory, network per interface, internet speed and ad blocking, volumes and disks, disk health, every temperature sensor, space per app against its limit, your public sites and every container. Graphs for live / 1 h / 24 h / 7 d / 30 d. `/system` and `/overview` redirect here. |
-| **media** | Music from Navidrome (tracks, albums, now playing, recently added) and the reading list from Miniflux. |
-| **uptime** | Every Uptime Kuma check: status, a 24-hour strip of half-hour bars, response time, 24 h and 30 d uptime, days left on the TLS certificate. |
-| **apps** | Every Dokploy project and service: containers, CPU, memory, domains, last deploy, plus a structured log of what the nightly cleanup removed. |
-| **jobs** | Scheduled host jobs with last result and next run, a *run now* button for each, and *tidy* / *reboot* buttons. |
-| **activity** | Tailnet devices, who's connected right now (SSH, Dokploy, this dashboard), and a 7-day timeline of logins, sudo commands, deploys, cleanups and reboots, folded into sessions. |
-
-| system | uptime |
-|---|---|
-| ![system](docs/system.png) | ![uptime](docs/uptime.png) |
-| **apps** | **jobs** |
-| ![apps](docs/apps.png) | ![jobs](docs/jobs.png) |
-
-![activity](docs/activity.png)
+| **home** | Eight tiles (cpu, memory, data disk, temperature, network, sites, ads blocked, internet) that jump to their box, then cpu with per-core load and temperature squares, memory, network and disk i/o (in up, out down), volumes (the backup disk shown apart and not counted), disk health, internet tests, ad blocking, space per app and per bucket (each square links to the app), sites with response times, containers that need attention, and the system log. Graphs for live / 1 h / 24 h / 7 d / 30 d. `/system` and `/overview` redirect here. |
+| **uptime** | Every Uptime Kuma check with a dithered strip over 24 h, 7 d or 30 d, response time, uptime for the range and days left on the TLS certificate; a summary strip of the worst check per bucket, search, filters, worst-first sort. |
+| **apps** | Every Dokploy service as a card (status, domains, cpu and memory, last deploy, what it is), grouped by project with pins, previews and staging folded away, search, filters and sorting, plus the cleanup log. |
+| **jobs** | Scheduled host jobs; open one to read its last and previous run straight from the journal, run it now, or jump to its logs. Server buttons (tidy, switches, reboot) and recent actions with who asked, how long it took and what it printed. |
+| **logs** | The host journal: grep, time range, priority, unit, source and boot filters in the URL, a dithered volume chart you can click into, infinite scroll and live tail. |
+| **activity** | Who's connected now, tailnet and lan devices, and a 7-day timeline with an hour-by-day heatmap, search, filter counts and sticky day headers. |
+| **media** | Now playing, the Navidrome library (recently added and most played, linked to the album) and unread Miniflux articles. |
+| **buckets** | Read-only Garage browser: folders, files, image thumbnails and previews for images, audio, video, pdf and text. |
+| **sessions** | Claude Code and OpenCode sessions: cost per day heatmap, cost by model computed from stored prices (cache included), usage limits, a filtered list and a readable conversation view with tool calls. |
 
 ## Design
 
-Black and white only, taken from the Zed *Monochrome* theme and a matching Ghostty palette: square corners,
-hairline borders, IBM Plex Sans for text and JetBrains Mono for numbers. The **only colors are orange and
-red**, and they mean one thing: something is close to (orange) or at (red) its limit. Light mode follows the OS.
+Warm monochrome boxes on a dark (or paper-light) page, Geist Sans for text and Geist Mono for numbers and labels.
+All data is drawn as **ordered dither** (a 4×4 Bayer pattern of 2 px dots): meters, bars, uptime strips, heat squares.
+The **only colors are orange and red**, and they mean one thing: something is close to (orange) or at (red) its
+limit. Theme follows the OS, or pick one in the status bar (phone: under *more*). The full spec is
+[`docs/design.md`](docs/design.md).
 
 ## How it works
 
@@ -125,11 +122,20 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
 | `GARAGE_ADMIN_URL` | — | `http://garage:3903`; admin token read from `GARAGE_CONFIG` |
 | `DOKPLOY_URL`, `DOKPLOY_PUBLIC_URL` | — | Dokploy API (key from `DOKPLOY_ENV`) and the link base for services |
 | `KUMA_URL` | — | Uptime Kuma, read via `/metrics` with the API key in `KUMA_KEY` |
-| `KUMA_PUBLIC_URL`, `NAVIDROME_PUBLIC_URL`, `MINIFLUX_PUBLIC_URL` | — | where the panels' "open ↗" links go |
+| `KUMA_PUBLIC_URL`, `NAVIDROME_PUBLIC_URL`, `MINIFLUX_PUBLIC_URL`, `SPEEDTEST_PUBLIC_URL`, `DOZZLE_PUBLIC_URL` | — | where the boxes' links go |
+| `BACKUP_MOUNTS` | `backup` | mount labels from `MOUNTS` that hold backups: shown apart, left out of the usable total |
+| `JOURNAL_DIR` | `/host/journal` | the host's `/var/log/journal`, mounted read-only, for the logs page and job run logs; empty reads the local journal |
+| `JOURNALCTL` | `journalctl` | command used to read it |
+| `GARAGE_S3_URL`, `GARAGE_S3_KEY`, `GARAGE_S3_SECRET` | — | a read-only Garage key for the bucket browser; unset hides browsing |
 | `SPEEDTEST_DB` | `/host/speedtest/database.sqlite` | Speedtest Tracker's database, mounted read-only |
 | `KEEP_GATE` | — | the secret your VPN route sends as `X-Keep-Gate`; unset, the API is open to whatever reaches the port |
 | `DOCKER_HOST` | — | `tcp://docker-proxy:2375`; without it, `DOCKER_SOCKET` (`/var/run/docker.sock`) |
 | `DATA_DIR` | `/data` | history DB, files from the host agent, `integrations.env` (Navidrome / AdGuard / Miniflux credentials) |
+
+Session costs come from per-model prices fetched daily from [models.dev](https://models.dev/api.json) into
+`sessions.db` (a new row only when a price changes). To price a model it doesn't list, or override one, put
+`[{"provider": "anthropic", "model": "claude-x", "input": 3, "output": 15, "cache_read": 0.3, "cache_write": 3.75}]`
+(USD per million tokens) in `DATA_DIR/prices.json`.
 
 Files the host side writes into `DATA_DIR` (all JSON): `jobs.json` and `activity.json` (agent), `actions.json`,
 `cleanup-runs.json`, `tidy.json`, and optionally `usage.json` (per-app space against limits) and
@@ -142,6 +148,16 @@ bun install
 bun run typecheck
 bun src/server.ts        # reads the host paths in HOST_PROC / HOST_SYS / HOST_ETC (default /host/…)
 ```
+
+Working on the UI away from the host: capture the API's responses into a folder outside the repo (they contain real
+IPs) and serve the UI from them. The logs page reads the real journal over ssh:
+
+```sh
+KEEP_FIXTURES=/tmp/fixtures JOURNALCTL=$PWD/scripts/dev-journalctl.sh JOURNAL_DIR= bun scripts/dev-fixtures.ts
+```
+
+The folder holds `snapshot.json`, `activity.json`, `h-<range>-<name>.json` from `/api/history`, `sessions/all.jsonl`
+(one `/api/session` body per line) and optionally `buckets/<name>/…` as stand-in buckets.
 
 Deploying to your own box: put `KEEP_HOST`, `COMPOSE_ID` and `SOURCE_DIR` in a git-ignored `.deploy.env` and run
 `./deploy.sh`.

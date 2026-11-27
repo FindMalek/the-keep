@@ -34,7 +34,11 @@ function shortCommand(command: string): string {
 export function summarize(events: TimelineEvent[]): string {
   const counts = new Map<string, number>();
   for (const event of events) counts.set(event.kind, (counts.get(event.kind) ?? 0) + 1);
-  return [...counts].map(([kind, count]) => `${count} ${kind === "sudo" ? (count === 1 ? "command" : "commands") : kind === "ssh login" ? (count === 1 ? "login" : "logins") : kind}`).join(" · ");
+  const name = (kind: string, count: number) => {
+    const word = kind === "sudo" ? "command" : kind === "ssh login" ? "login" : kind;
+    return count === 1 ? word : `${word}s`;
+  };
+  return [...counts].map(([kind, count]) => `${count} ${name(kind, count)}`).join(" · ");
 }
 
 export function buildTimeline(data: ActivityPayload): TimelineEvent[] {
@@ -69,7 +73,8 @@ export function buildTimeline(data: ActivityPayload): TimelineEvent[] {
   for (const deploy of data.deploys) {
     events.push({
       at: Date.parse(deploy.at), kind: "deploy", tone: deploy.status === "error" ? "crit" : "plain", filter: "deploys",
-      who: `${deploy.project.toLowerCase()} / ${deploy.service}`, via: null,
+      // The service is what changed; the project comes second so a narrow column cuts the less useful part.
+      who: `${deploy.service} · ${deploy.project.toLowerCase()}`, via: null,
       what: `${deploy.title.toLowerCase()} · ${deploy.status === "done" ? "ok" : deploy.status}${deploy.durationSec !== null ? ` · ${Math.round(deploy.durationSec)}s` : ""}`,
       ref: deploy.id.slice(0, 10), group: `deploy|${deploy.project}|${deploy.service}`,
     });
