@@ -11,5 +11,5 @@
     "noEmit": true,
     "types": ["bun"]
   },
-  "include": ["src", "docker-proxy"]
+  "include": ["src", "docker-proxy", "scripts"]
 }

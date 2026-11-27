@@ -117,7 +117,7 @@ export function parseClaudeSession(jsonl: string, machine: string): ParsedSessio
       machine,
       directory,
       branch,
-      title: title ?? messages.find((m) => m.role === "user")?.text.trim().replace(/\s+/g, " ").slice(0, 80) ?? null,
+      title: title ?? firstPrompt(messages.find((m) => m.role === "user")?.text ?? null),
       startedAt: Math.min(...stamps),
       endedAt: Math.max(...stamps),
       costUsd: costRuns.size ? costUsd : null,
@@ -145,4 +145,12 @@ function blank(role: SessionMessage["role"], text: string, at: number): SessionM
     latencyMs: null,
     at,
   };
+}
+
+/** Markup stripped before cutting, so a title never ends inside `<command-message`. */
+function firstPrompt(text: string | null): string | null {
+  if (!text) return null;
+  const words = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (!words) return null;
+  return words.length > 80 ? `${words.slice(0, 79).replace(/\s+\S*$/, "")}…` : words;
 }

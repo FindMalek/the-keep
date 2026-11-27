@@ -2,6 +2,8 @@ import { useEffect, useState } from "react";
 import type { HostInfo } from "../../shared/types";
 import type { Connection } from "../lib/use-live-data";
 import { duration } from "../lib/format";
+import { navigate } from "../lib/router";
+import { Sparkline } from "./sparkline";
 
 const CONNECTION_LABEL: Record<Connection, string> = { connecting: "connecting", live: "live", offline: "reconnecting" };
 
@@ -14,15 +16,17 @@ function useClock(): string {
   return now.toLocaleTimeString([], { hour12: false });
 }
 
-export function TitleBar({ host, connection }: { host: HostInfo | null; connection: Connection }) {
+export function TitleBar({ host, connection, cpu }: { host: HostInfo | null; connection: Connection; cpu: number[] }) {
   const clock = useClock();
 
   return (
     <header className="title-bar">
       <div className="title-left">
-        <h1>{host?.hostname ?? "keep"}</h1>
+        <a className="title-host" href="/" onClick={navigate}>
+          {host?.hostname ?? "keep"}
+        </a>
         {host && (
-          <span className="muted">
+          <span className="title-os">
             {host.os.toLowerCase()} · {host.kernel}
           </span>
         )}
@@ -30,15 +34,18 @@ export function TitleBar({ host, connection }: { host: HostInfo | null; connecti
       <div className="title-right">
         {host && (
           <>
-            <span>
-              <span className="muted">up</span> {duration(host.uptimeSec)}
+            <span className="title-fact">
+              <span className="muted">up</span> <span className="n-ago">{duration(host.uptimeSec)}</span>
             </span>
-            <span>
-              <span className="muted">procs</span> {host.processes}
+            <span className="title-fact">
+              <span className="muted">procs</span> <span className="num">{host.processes}</span>
             </span>
           </>
         )}
-        <span className="num">{clock}</span>
+        <span className="num title-fact">{clock}</span>
+        <span className="title-cpu" title="cpu, last 2 minutes">
+          <Sparkline values={cpu.slice(-120)} capacity={120} stepSec={1} max={1} format={String} height={12} label="cpu" bare />
+        </span>
         <span className={`connection connection-${connection}`}>
           <span className="connection-square" aria-hidden="true" />
           {CONNECTION_LABEL[connection]}

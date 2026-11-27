@@ -16,6 +16,14 @@ services:
       KUMA_PUBLIC_URL: "https://kuma.example.com"
       NAVIDROME_PUBLIC_URL: "https://music.example.com"
       MINIFLUX_PUBLIC_URL: "https://rss.example.com"
+      SPEEDTEST_PUBLIC_URL: "https://speed.example.com"
+      DOZZLE_PUBLIC_URL: "https://logs.example.com"
+      # Mount labels (from MOUNTS) that hold backups: shown apart and left out of the usable total.
+      BACKUP_MOUNTS: "backup"
+      # Bucket browser: a Garage key with read grants only (see README). Leave unset to hide browsing.
+      GARAGE_S3_URL: "http://garage:3900"
+      GARAGE_S3_KEY: ${GARAGE_S3_KEY:-}
+      GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-}
       # Docker only through the proxy below (a :ro socket mount still allows the whole Docker API).
       DOCKER_HOST: "tcp://docker-proxy:2375"
       # Your reverse proxy's VPN-only route must add `X-Keep-Gate: <this>`; without it the API answers 403, so other
@@ -35,6 +43,9 @@ services:
       - /etc/dokploy-api.env:/host/dokploy-api.env:ro
       - /srv/uptime-kuma/metrics.key:/host/kuma-metrics.key:ro
       - /srv/tools/speedtest:/host/speedtest:ro
+      # Logs page and job run logs: the host journal, read with the image's own journalctl.
+      - /var/log/journal:/host/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
     depends_on:
       - docker-proxy
     networks:
