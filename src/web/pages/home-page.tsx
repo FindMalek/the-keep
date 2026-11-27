@@ -9,6 +9,7 @@ import { PageHeader, Tabs } from "../components/page-header";
 import { SensorsPanel } from "../components/sensors-panel";
 import { ServicesPanel } from "../components/services-panel";
 import { SmartPanel } from "../components/smart-panel";
+import { JournalPanel } from "../components/journal-panel";
 import { SpacePanel } from "../components/space-panel";
 import type { SeriesView } from "../components/sparkline";
 import { StatTiles, type Tile } from "../components/stat-tiles";
@@ -143,6 +144,7 @@ export function HomePage({ snapshot, history, historySize }: HomePageProps) {
         <SensorsPanel sensors={snapshot.sensors} series={range === "live" ? undefined : view(tempKey)} />
         <SpacePanel garage={snapshot.garage} usage={snapshot.usage} mounts={snapshot.mounts} />
         <ServicesPanel services={snapshot.services} uptime={snapshot.uptime} host={snapshot.host} />
+        <JournalPanel journal={snapshot.journal} />
         <ContainersPanel containers={snapshot.containers} series={range === "live" ? undefined : view("containers")} />
       </div>
     </>

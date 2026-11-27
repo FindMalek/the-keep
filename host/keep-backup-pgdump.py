@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """Nightly dump of every running Postgres / MySQL / MariaDB container.
 
-Dumps go to /srv/backrest/staging/postgres so Backrest can back them up.
-Run from a systemd timer (e.g. keep-backup-pgdump.timer at 03:00 UTC).
+Dumps go to /srv/backup-staging/db, which the 03:00 Backrest plan picks up: a consistent copy, unlike the
+live data folders it also backs up. PR previews are skipped; a dump not refreshed for 7 days (its database is
+gone) is deleted. Runs from keep-backup-pgdump.timer at 02:30.
 """
 
 import json
@@ -10,9 +11,11 @@ import os
 import re
 import subprocess
 import sys
+import time
 from datetime import datetime, timezone
 
-STAGING = "/srv/backrest/staging/postgres"
+STAGING = "/srv/backup-staging/db"
+STALE_SEC = 7 * 86400
 
 
 def write_dump(cmd, env_name, password, path):
@@ -58,7 +61,9 @@ def containers():
     for line in out.splitlines():
         container = json.loads(line)
         image = container.get("Image", "").lower()
-        if "postgres" in image:
+        if re.search(r"(^|-)pr-\d+", container["Names"]):
+            continue
+        if any(name in image for name in ("postgres", "pgvector", "postgis", "timescale")):
             yield container["Names"], "postgres"
         elif "mariadb" in image:
             yield container["Names"], "mariadb"
@@ -67,6 +72,8 @@ def containers():
 
 
 def safe_name(name):
+    # Swarm tasks are <service>.<slot>.<task id>; the id changes on every restart, the service doesn't.
+    name = re.sub(r"\.\d+\.[a-z0-9]{25}$", "", name)
     return re.sub(r"[^a-z0-9_-]", "-", name.lower()).strip("-")
 
 
@@ -102,6 +109,9 @@ def main():
             failed.append(container_name)
             print(f"failed {container_name}: {error.stderr}", file=sys.stderr)
 
+    for entry in os.scandir(STAGING):
+        if entry.name.endswith(".sql") and time.time() - entry.stat().st_mtime > STALE_SEC:
+            os.remove(entry.path)
     with open(os.path.join(STAGING, "last-run.json"), "w") as handle:
         json.dump({"at": datetime.now(timezone.utc).isoformat(timespec="seconds"), "failed": failed}, handle)
     if failed:

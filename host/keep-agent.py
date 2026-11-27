@@ -34,6 +34,8 @@ MIN_UPTIME_FOR_REBOOT_SEC = 300
 DEFAULT_JOBS = {
     "keep-cleanup": "prunes old dokploy deployments",
     "keep-tidy": "frees disk space",
+    "keep-backup-pgdump": "dumps databases before the backup",
+    "keep-disk-watch": "alerts on full disks and stale backups",
     "keep-upgrade": "reboots if updates require it",
     "keep-smart": "checks ssd health and wear",
 }

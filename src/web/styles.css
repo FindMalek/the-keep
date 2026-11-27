@@ -418,7 +418,33 @@ ul {
 }
 
 .smart li {
-  grid-template-columns: minmax(110px, 1fr) auto auto;
+  grid-template-columns: minmax(80px, 1fr) auto auto;
+}
+
+.smart li .small,
+.smart li .bars {
+  grid-column: 1 / -1;
+}
+
+.bars {
+  display: block;
+  width: 100%;
+  height: 20px;
+  fill: currentColor;
+  opacity: 0.55;
+}
+
+.bars.tall {
+  height: 56px;
+}
+
+.bars .crit {
+  fill: var(--crit, #d33);
+  opacity: 1;
+}
+
+.journal li {
+  grid-template-columns: 1fr auto;
 }
 
 .buckets li {
@@ -1335,8 +1361,9 @@ a.button {
     "tiles tiles tiles tiles tiles tiles tiles tiles tiles tiles tiles tiles"
     "cpu cpu cpu cpu cpu cpu mem mem mem net net net"
     "inet inet inet inet inet inet dnsb dnsb dnsb dnsb dnsb dnsb"
-    "disk disk disk disk smart smart smart sens sens sens sens sens"
+    "disk disk disk disk smart smart smart smart sens sens sens sens"
     "bkt bkt bkt bkt bkt bkt svc svc svc svc svc svc"
+    "logs logs logs logs logs logs logs logs logs logs logs logs"
     "ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr ctr";
 }
 
@@ -1410,7 +1437,7 @@ a.button {
 @media (max-width: 1180px) {
   .grid.home {
     grid-template-columns: repeat(2, minmax(0, 1fr));
-    grid-template-areas: "tiles tiles" "cpu cpu" "mem net" "inet dnsb" "disk smart" "sens sens" "bkt bkt" "svc svc" "ctr ctr";
+    grid-template-areas: "tiles tiles" "cpu cpu" "mem net" "inet dnsb" "disk smart" "sens sens" "bkt bkt" "svc svc" "logs logs" "ctr ctr";
   }
 
   .grid.media {
@@ -1426,7 +1453,7 @@ a.button {
 @media (max-width: 720px) {
   .grid.home {
     grid-template-columns: minmax(0, 1fr);
-    grid-template-areas: "tiles" "cpu" "mem" "net" "inet" "dnsb" "disk" "smart" "sens" "bkt" "svc" "ctr";
+    grid-template-areas: "tiles" "cpu" "mem" "net" "inet" "dnsb" "disk" "smart" "sens" "bkt" "svc" "logs" "ctr";
   }
 
   .tiles {

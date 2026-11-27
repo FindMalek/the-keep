@@ -1,0 +1,7 @@
+[Unit]
+Description=Trim cache buckets in Garage to their cap, oldest objects first
+After=docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/keep-bucket-cap

@@ -50,9 +50,29 @@ export interface DiskStats {
 
 export interface SmartDisk {
   device: string;
+  kind?: "ssd" | "hdd";
   health: "passed" | "failed" | "unknown";
+  /** Share of the rated endurance used up: 2 means 98% left. */
   wearPercent: number | null;
   temperatureC: number | null;
+  writtenGB?: number | null;
+  powerOnHours?: number | null;
+  badSectors?: number | null;
+  /** A sleeping HDD isn't woken for this; its values are from the last time it was awake. */
+  asleep?: boolean;
+  /** One point per day, oldest first. */
+  history?: { day: string; writtenGB: number | null; wearPercent: number | null }[];
+}
+
+/** Written by keep-disk-watch every 15 minutes from the systemd journal. */
+export interface JournalStats {
+  at: number | null;
+  diskBytes: number | null;
+  capBytes: number | null;
+  /** The last 24 hours, oldest first. */
+  hours: { at: number; lines: number; errors: number; warnings: number }[];
+  /** Who wrote the most in the last hour. */
+  top: { source: string; lines: number }[];
 }
 
 export interface SmartStats {
@@ -275,6 +295,7 @@ export interface Snapshot {
   network: NetStats[];
   sensors: SensorReading[];
   smart: SmartStats;
+  journal: JournalStats;
   containers: ContainerStats[];
   garage: GarageStats;
   services: ServiceCheck[];

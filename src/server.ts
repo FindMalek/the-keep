@@ -9,6 +9,7 @@ import { collectMounts, createDiskCollector } from "./collectors/storage";
 import { createNetworkCollector } from "./collectors/network";
 import { collectSensors } from "./collectors/sensors";
 import { smart as collectSmart } from "./collectors/smart";
+import { journal as collectJournal } from "./collectors/journal";
 import { createContainerCollector } from "./collectors/containers";
 import { createGarageCollector } from "./collectors/garage";
 import { checkServices } from "./collectors/services";
@@ -55,7 +56,7 @@ const collectApps = createAppsCollector(
 
 const SECOND = 1000;
 
-const slow: Pick<Snapshot, "mounts" | "containers" | "garage" | "services" | "apps" | "jobs" | "uptime" | "usage" | "home" | "smart"> & {
+const slow: Pick<Snapshot, "mounts" | "containers" | "garage" | "services" | "apps" | "jobs" | "uptime" | "usage" | "home" | "smart" | "journal"> & {
   publicIp: string | null;
   dnsIp: string | null;
 } = {
@@ -68,6 +69,7 @@ const slow: Pick<Snapshot, "mounts" | "containers" | "garage" | "services" | "ap
   uptime: { reachable: false, monitors: [] },
   usage: { at: null, paths: {} },
   smart: { at: null, disks: [] },
+  journal: { at: null, diskBytes: null, capBytes: null, hours: [], top: [] },
   home: {
     music: { reachable: false, songs: 0, albums: 0, artists: 0, nowPlaying: [], recentlyAdded: [], lastImport: null },
     dns: { reachable: false, protection: false, queries: 0, blocked: 0, avgMs: 0, hourlyQueries: [], hourlyBlocked: [], topBlocked: [] },
@@ -97,6 +99,7 @@ every(5 * SECOND, async () => {
     collectUsage(config.dataDir),
   ]);
   slow.smart = collectSmart();
+  slow.journal = collectJournal();
 });
 const collectKuma = createKumaCollector(config.kumaUrl, config.kumaKeyPath);
 every(15 * SECOND, async () => {
@@ -151,6 +154,7 @@ async function tick(): Promise<void> {
     network,
     sensors,
     smart: slow.smart,
+    journal: slow.journal,
     containers: slow.containers,
     garage: slow.garage,
     services: slow.services,

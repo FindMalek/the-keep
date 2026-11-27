@@ -1,8 +1,8 @@
 [Unit]
-Description=Run SMART check weekly
+Description=Run SMART check daily
 
 [Timer]
-OnCalendar=Sun *-*-* 04:00:00
+OnCalendar=*-*-* 04:00:00
 Persistent=true
 
 [Install]
