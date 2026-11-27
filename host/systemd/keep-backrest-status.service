@@ -1,0 +1,9 @@
+[Unit]
+Description=Collect local Backrest snapshot metadata for the dashboard
+RequiresMountsFor=/srv
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/keep-dashboard-backrest.env
+ExecStart=/usr/local/bin/keep-backrest-status

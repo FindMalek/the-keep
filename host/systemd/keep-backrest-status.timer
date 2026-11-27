@@ -1,0 +1,10 @@
+[Unit]
+Description=Read local Backrest snapshots once a day, after the backup
+
+[Timer]
+# Reading the repo wakes the backup HDD, so only after the 03:00 backup, not every few minutes.
+OnCalendar=*-*-* 06:00:00
+Persistent=true
+
+[Install]
+WantedBy=timers.target

@@ -1,21 +1,27 @@
-# Dokploy: project "Infrastructure" → compose "backrest-local" (source: Raw).
+# Not in Dokploy's project list: lives at /etc/dokploy/compose/backrest-local, run with
+#   docker compose -p backrest-local -f /etc/dokploy/compose/backrest-local/docker-compose.yml up -d
 # Web UI for restic backups to the local 2TB HDD (issue #69). Tailnet only:
-# backup.findmalek.engineer. Separate instance from deploy/backrest (that one
-# is the cloud copy and deliberately excludes /srv/docker to save cloud
-# storage cost; this one is local-only and has room to include it).
+# backup.findmalek.engineer. The cloud copy (deploy/backrest) is not deployed right now.
 #
-# First-time setup:
-# 1. Deploy this compose.
-# 2. Open https://backup.findmalek.engineer and add a plan:
-#    - paths: /srv (all docker volumes, Seafile, Ente, Vaultwarden, app configs)
-#    - exclude: /srv/backup-hdd (the repo's own destination), /srv/music (re-buyable)
-#    - repo: local:/repo
-#    - repo password: generated on the host, see
-#      /srv/backup-hdd/backrest-data/.repo-password -- copy it into Vaultwarden
-#      and delete the file once saved there.
-#    - schedule: nightly, retention 7 daily / 4 weekly / 3 monthly (HDD is 1.8TB,
-#      no need to be as stingy with retention as the B2 plan)
-# 3. HDD SMART health is checked weekly by keep-smart.timer already (dashboard).
+# Its own state (config, task log) is on the SSD in /srv/backrest-local, so the HDD only spins up for the
+# nightly backup and sleeps the rest of the day (host/etc/udev/rules.d/69-keep-hdd.rules).
+#
+# Plan "local-nightly" (repo "local-hdd" = /repo, password in Vaultwarden):
+#   paths:    /srv, /host/etc, /host/usr-local-bin
+#   schedule: 03:00, after keep-backup-pgdump (02:30) wrote consistent dumps to /srv/backup-staging/db
+#   keep:     7 daily, 4 weekly, 3 monthly; prune weekly (Sun 04:00), check 5% of the data monthly
+#   back up:  music (from Soulseek, often gone at the source) and Navidrome, app data in /srv and docker
+#             volumes, Garage (Ente photos and buckets, metadata from its 6-hourly snapshots), database dumps,
+#             /etc (Dokploy, systemd, docker, keep-* env), keep-* scripts
+#   exclude:  everything that can be pulled, rebuilt or downloaded again:
+#     /srv/backup-hdd, /srv/backrest-local   this backup itself
+#     /srv/containerd, /srv/docker/{buildkit,containers,image,rootfs,tmp,runtimes,plugins}
+#                                            images, build cache, container logs
+#     /srv/docker/volumes/{buildx_buildkit_*,pr-*,*-pr-*,*turbo-cache*}   builder caches, PR previews
+#     /srv/garage/meta/db.lmdb               live database; meta/snapshots is the consistent copy
+#     /srv/navidrome/cache (thumbnails, transcodes), /srv/actions-runner, /srv/ci-cache
+#     /host/etc/dokploy/{applications,compose}/*/code, /host/etc/dokploy/logs   git checkouts, build logs
+# Expect ~270 GB; keep-disk-watch alerts when the HDD grows by more than 100 GB in a day.
 services:
   backrest-local:
     image: garethgeorge/backrest:latest
@@ -24,9 +30,11 @@ services:
       BACKREST_DATA: /data
       BACKREST_CONFIG: /data/config/config.json
     volumes:
-      - /srv/backup-hdd/backrest-data:/data
+      - /srv/backrest-local:/data
       - /srv/backup-hdd/restic-repo:/repo
       - /srv:/srv:ro
+      - /etc:/host/etc:ro
+      - /usr/local/bin:/host/usr-local-bin:ro
     labels:
       keep.project: infrastructure
       keep.domains: backup.findmalek.engineer

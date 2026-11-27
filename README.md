@@ -66,10 +66,36 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
    install -m 755 host/keep-agent.py /usr/local/bin/keep-agent
    install -m 755 host/keep-cleanup.py /usr/local/bin/keep-cleanup   # Dokploy only
    install -m 755 host/keep-tidy.py /usr/local/bin/keep-tidy
+   install -m 755 host/keep-disk-watch.py /usr/local/bin/keep-disk-watch
    install -m 700 host/dk /usr/local/bin/dk                          # Dokploy API helper, reads /etc/dokploy-api.env
    cp host/systemd/* /etc/systemd/system/ && systemctl daemon-reload
-   systemctl enable --now keep-agent.path keep-agent-status.timer keep-cleanup.timer keep-tidy.timer
+   systemctl enable --now keep-agent.path keep-agent-status.timer keep-cleanup.timer keep-tidy.timer keep-disk-watch.timer
    ```
+   Storage and drive health (the keep's own setup):
+   ```sh
+   install -m 755 host/keep-backup-pgdump.py /usr/local/bin/keep-backup-pgdump      # 02:30, before the 03:00 backup
+   install -m 755 host/keep-backrest-status.py /usr/local/bin/keep-backrest-status  # 06:00, so the HDD can sleep
+   install -m 755 host/keep-bucket-cap.py /usr/local/bin/keep-bucket-cap            # needs /etc/keep-garage-janitor.env
+   install -m 755 host/keep-smart.py /usr/local/bin/keep-smart                      # daily, keeps a year of history
+   cp -r host/etc/. /etc/ && apt-get install -y hdparm systemd-zram-generator     # build cache cap, journald cap,
+   systemctl restart docker systemd-journald && udevadm trigger                   # zram swap, HDD spin-down
+   systemctl enable --now keep-backup-pgdump.timer keep-backrest-status.timer keep-bucket-cap.timer keep-smart.timer
+   ```
+   What each disk may hold, and what clears it, oldest first:
+
+   | | cap | cleared by |
+   |---|---|---|
+   | docker build cache | 75 GB | BuildKit GC, least recently used first (`host/etc/docker/daemon.json`); keep-tidy trims to 20 GB when a disk is over 75% |
+   | images, stopped containers | in use or under 2 days | keep-tidy daily (1 day under pressure) |
+   | Garage `turbo-cache` bucket | 20 GB | keep-bucket-cap hourly deletes the oldest objects down to 18 GB; 20 GiB quota and 14-day expiry behind it |
+   | failing apps | — | keep-disk-watch stops anything that keeps failing for 15-30 min (Swarm or compose), Dokploy excepted |
+| unused volumes | — | keep-tidy: previews' right away, anonymous after a day, any other after 30 days |
+   | container logs | 3 × 10 MB | daemon.json; keep-tidy truncates any log over 100 MB from before the cap |
+   | journal | 1 GB, 14 days | `host/etc/systemd/journald.conf.d/keep.conf` |
+   | local backup HDD | 7 daily, 4 weekly, 3 monthly | Backrest prune weekly; plan and excludes in `deploy/backrest-local` |
+
+   keep-disk-watch (every 15 min) sends to ntfy: a disk at 75%, no backup in 36h, a disk growing more than its daily
+   allowance, SSD writes over budget or life under 80%, HDD bad sectors, heat or head parking, and failing services.
 3. Optional: list your own systemd timers on the jobs page in `/srv/keep-dashboard/agent.json`, and apps that sleep
    when idle under `switches` to get start/stop buttons:
    `{"switches": {"minecraft": {"description": "game server", "filters": ["label=com.docker.compose.service=minecraft"]}}}`

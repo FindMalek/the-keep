@@ -5,7 +5,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      MOUNTS: "system=/:/host/fs/system,data=/srv:/data"
+      MOUNTS: "system=/:/host/fs/system,data=/srv:/data,backup=/srv/backup-hdd:/host/fs/backup"
       NET_IFACES: "eth0=lan,tailscale0=tailscale"
       SERVICES: "photos=https://photos.example.com,drive=https://drive.example.com"
       DDNS_HOST: "home.example.com"
@@ -28,6 +28,8 @@ services:
       - /etc/os-release:/host/etc/os-release:ro
       - /var/lib/keep-dashboard:/host/fs/system:ro
       - /srv/keep-dashboard:/data
+      # rslave: the HDD shows up here even when it is mounted after the container starts.
+      - /srv/backup-hdd:/host/fs/backup:ro,rslave
       # Optional integrations:
       - /srv/garage/garage.toml:/host/garage.toml:ro
       - /etc/dokploy-api.env:/host/dokploy-api.env:ro

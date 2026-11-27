@@ -1,0 +1,11 @@
+{
+  "data-root": "/srv/docker",
+  "log-driver": "json-file",
+  "log-opts": { "max-size": "10m", "max-file": "3" },
+  "builder": {
+    "gc": {
+      "enabled": true,
+      "policy": [{ "all": true, "reservedSpace": "10GB", "maxUsedSpace": "75GB", "minFreeSpace": "200GB" }]
+    }
+  }
+}

@@ -33,7 +33,8 @@ for _ in range(100):
             f"docker inspect -f '{{{{.State.Health.Status}}}}' $(docker ps -qf label=com.docker.compose.service={service})",
             shell=True, capture_output=True, text=True,
         ).stdout.strip()
-        if health in ("healthy", ""):
+        # other apps' compose files can have a service with the same name; all of them must be healthy
+        if set(health.split()) <= {"healthy"}:
             sys.exit(print(f"{service} deployed"))
         time.sleep(2)
     sys.exit(f"{service} deployed but not healthy")
