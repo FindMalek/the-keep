@@ -7,7 +7,7 @@
 - SSD writes over the daily budget, SSD life under 80%, HDD bad sectors, heat or head parking
 - an app that keeps failing (Swarm service at 0 running, or a container restarting) is stopped and reported
 
-It also writes journal.json (log volume per hour, top writers) for the dashboard. Runs every 15 minutes.
+It also holds the docker build cache to 75 GB and writes journal.json (log volume per hour, top writers) for the dashboard. Runs every 15 minutes.
 
 The backup HDD is never woken for this: its usage comes from statvfs, its SMART only when it is spinning, and
 backup freshness from the dashboard's backrest-status.json.
@@ -37,6 +37,8 @@ REPEAT_SEC = 86400
 TIDY_EVERY_SEC = 6 * 3600
 STATE = "/srv/keep-dashboard/disk-watch.json"
 JOURNAL_OUT = "/srv/keep-dashboard/journal.json"
+# BuildKit counts less than `docker system df` shows (~8 GB less here); 65gb keeps the reported total under 75 GB.
+BUILD_CACHE_CAP = "65gb"
 NTFY_TOPIC_FILE = "/srv/uptime-kuma/admin.env"
 
 
@@ -162,6 +164,13 @@ def check_crash_loops(state, found):
     state["restarts"] = restarts
 
 
+def enforce_build_cache_cap():
+    # BuildKit's own GC (daemon.json) only runs now and then and overshoots; this makes 75 GB a hard line,
+    # least recently used first.
+    subprocess.run(["docker", "builder", "prune", "--all", "--force", "--max-used-space", BUILD_CACHE_CAP],
+                   capture_output=True)
+
+
 def write_journal_summary():
     # For the dashboard's log panel: lines per hour over a day, by priority, and who writes the most.
     out = subprocess.run(["journalctl", "--since", "-24h", "-o", "json", "--no-pager",
@@ -207,6 +216,7 @@ def main():
     check_backup(found, now)
     check_drives(state, found, now)
     check_crash_loops(state, found)
+    enforce_build_cache_cap()
     write_journal_summary()
     sent = state.get("sent", {})
     for key, (message, priority) in found.items():

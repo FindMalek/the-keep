@@ -1,4 +1,9 @@
-import { lookup } from "node:dns/promises";
+import { Resolver } from "node:dns/promises";
+
+// Public resolvers: the box's own DNS (AdGuard) answers tailnet names with the Tailscale IP, which made the
+// DDNS check look broken.
+const publicDns = new Resolver();
+publicDns.setServers(["1.1.1.1", "9.9.9.9"]);
 import type { HostInfo } from "../shared/types";
 import { HOST_ETC, HOST_PROC, readText } from "../lib/host";
 import { hostAddresses } from "./network";
@@ -39,7 +44,7 @@ export async function publicIp(): Promise<string | null> {
 export async function resolveIp(host: string | null): Promise<string | null> {
   if (!host) return null;
   try {
-    return (await lookup(host, { family: 4 })).address;
+    return (await publicDns.resolve4(host))[0] ?? null;
   } catch {
     return null;
   }

@@ -77,18 +77,20 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
    install -m 755 host/keep-backrest-status.py /usr/local/bin/keep-backrest-status  # 06:00, so the HDD can sleep
    install -m 755 host/keep-bucket-cap.py /usr/local/bin/keep-bucket-cap            # needs /etc/keep-garage-janitor.env
    install -m 755 host/keep-smart.py /usr/local/bin/keep-smart                      # daily, keeps a year of history
+   install -m 755 host/keep-previews.py /usr/local/bin/keep-previews                # hourly, previews of closed PRs
    cp -r host/etc/. /etc/ && apt-get install -y hdparm systemd-zram-generator     # build cache cap, journald cap,
    systemctl restart docker systemd-journald && udevadm trigger                   # zram swap, HDD spin-down
-   systemctl enable --now keep-backup-pgdump.timer keep-backrest-status.timer keep-bucket-cap.timer keep-smart.timer
+   systemctl enable --now keep-backup-pgdump.timer keep-backrest-status.timer keep-bucket-cap.timer keep-smart.timer keep-previews.timer
    ```
    What each disk may hold, and what clears it, oldest first:
 
    | | cap | cleared by |
    |---|---|---|
-   | docker build cache | 75 GB | BuildKit GC, least recently used first (`host/etc/docker/daemon.json`); keep-tidy trims to 20 GB when a disk is over 75% |
+   | docker build cache | 75 GB | BuildKit GC plus a hard trim every 15 min (keep-disk-watch), least recently used first; keep-tidy trims to 20 GB when a disk is over 75% |
    | images, stopped containers | in use or under 2 days | keep-tidy daily (1 day under pressure) |
    | Garage `turbo-cache` bucket | 20 GB | keep-bucket-cap hourly deletes the oldest objects down to 18 GB; 20 GiB quota and 14-day expiry behind it |
-   | failing apps | — | keep-disk-watch stops anything that keeps failing for 15-30 min (Swarm or compose), Dokploy excepted |
+   | closed PR previews | — | keep-previews (hourly) deletes the app and its database once GitHub says the PR is closed |
+| failing apps | — | keep-disk-watch stops anything that keeps failing for 15-30 min (Swarm or compose), Dokploy excepted |
 | unused volumes | — | keep-tidy: previews' right away, anonymous after a day, any other after 30 days |
    | container logs | 3 × 10 MB | daemon.json; keep-tidy truncates any log over 100 MB from before the cap |
    | journal | 1 GB, 14 days | `host/etc/systemd/journald.conf.d/keep.conf` |
