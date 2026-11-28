@@ -47,12 +47,12 @@ def attribute(out, name):
 
 
 def labelled(out, key):
-    """NVMe style `Key:   value` lines."""
+    """NVMe style `Key:   value` lines; smartctl groups thousands with commas (`1,234`)."""
     for line in out.splitlines():
         if line.startswith(key):
-            match = re.search(r"(\d+)", line.split(":", 1)[1])
+            match = re.search(r"(\d[\d,]*)", line.split(":", 1)[1])
             if match:
-                return int(match.group(1))
+                return int(match.group(1).replace(",", ""))
     return None
 
 

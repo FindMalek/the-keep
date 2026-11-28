@@ -126,6 +126,8 @@ def check_drives(state, found, now):
     marks = state.setdefault("marks", {})
     for device, budget in WRITE_BUDGET_GB.items():
         values = smart(device)
+        if bad := values.get(5, 0) + values.get(197, 0) + values.get(198, 0):
+            found[f"sectors:{device}"] = (f"{device} SSD has {bad} reallocated/pending/uncorrectable sectors", 5)
         if values.get(231) is not None and values[231] < MIN_SSD_LIFE_PCT:
             found[f"life:{device}"] = (f"{device} SSD life is down to {values[231]}%", 4)
         # attribute 241 counts GB on these Team SSDs
