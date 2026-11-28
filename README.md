@@ -95,6 +95,19 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
 
    keep-disk-watch (every 15 min) sends to ntfy: a disk at 75%, no backup in 36h, a disk growing more than its daily
    allowance, SSD writes over budget or life under 80%, HDD bad sectors, heat or head parking, and failing services.
+
+   Reachability from outside the house, checked twice so neither blind spot is left:
+   ```sh
+   install -m 755 host/keep-reachability.py /usr/local/bin/keep-reachability   # every 5 min
+   systemctl enable --now keep-reachability.timer
+   ```
+   keep-reachability resolves every public Traefik host through Cloudflare DNS (not AdGuard's tailnet rewrite),
+   fetches it at that address and checks `home.findmalek.engineer` still matches the box's public IP. A host is down
+   after two failed runs; changes go to ntfy and `reachability.log`, the latest result to `reachability.json`.
+   It can't report its own box being offline, so `.github/workflows/reachability.yml` checks the hosts in
+   `.github/reachability-hosts.txt` from a GitHub runner every 10 minutes and pushes changes to ntfy (repo secret
+   `NTFY_TOPIC`); a failed run also emails you. Never pin `*.findmalek.engineer` to the LAN IP in a browser or hosts
+   file: it works at home and breaks every site everywhere else.
 3. Optional: list your own systemd timers on the jobs page in `/srv/keep-dashboard/agent.json`, and apps that sleep
    when idle under `switches` to get start/stop buttons:
    `{"switches": {"minecraft": {"description": "game server", "filters": ["label=com.docker.compose.service=minecraft"]}}}`
