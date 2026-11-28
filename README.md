@@ -108,6 +108,27 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
    `.github/reachability-hosts.txt` from a GitHub runner every 10 minutes and pushes changes to ntfy (repo secret
    `NTFY_TOPIC`); a failed run also emails you. Never pin `*.findmalek.engineer` to the LAN IP in a browser or hosts
    file: it works at home and breaks every site everywhere else.
+
+   Telegram bot and outside heartbeat (ntfy stays as the loud channel):
+   ```sh
+   install -d -m 700 /etc/keep   # bot.env: TELEGRAM_TOKEN TELEGRAM_CHAT TELEGRAM_OWNER BOT_PIN GROQ_API_KEY HC_PING_KEY TZ DDNS_HOST
+   install -m 755 host/keep-bot.py /usr/local/bin/keep-bot
+   install -m 755 host/keep-heartbeat /usr/local/bin/keep-heartbeat
+   systemctl enable --now keep-bot.service keep-heartbeat.timer
+   ```
+   keep-bot runs on the host, outside Docker, and only needs outbound internet (it falls back to DNS-over-HTTPS), so
+   it still answers when Docker, Traefik, Tailscale or DDNS are broken. In a Telegram forum group it creates the
+   topics alerts, control, actions, jobs, deploys, updates, access, mail and digest, then:
+   - alerts with buttons that edit themselves on recovery: Uptime Kuma monitors, crashed or unhealthy containers
+     (restarted once automatically), failed jobs and n8n runs, plus anything dropped in `<KEEP_DATA>/outbox/*.json`
+     (keep-disk-watch, keep-reachability, keep-upgrade and the AI usage alert do)
+   - commands (`/status /net /fix /graph /jobs /logs /restart /n8n /space /reboot /sh`) and plain language in any
+     topic: Groq `openai/gpt-oss-120b` with read tools for the whole box (metrics, logs, journal, jobs, n8n runs node
+     by node, docker space, dashboard data, read-only commands). Changes are only proposed as buttons; `/sh` and
+     volume deletion also need the PIN on a button keypad, and a typed PIN is deleted
+   - a pinned morning digest with a chart, job results, logins, and a network watchdog (re-apply the network after
+     5 min offline, reboot after 15, at most hourly)
+   keep-heartbeat pings healthchecks.io every minute, so a dead box or dead internet still reaches Telegram.
 3. Optional: list your own systemd timers on the jobs page in `/srv/keep-dashboard/agent.json`, and apps that sleep
    when idle under `switches` to get start/stop buttons:
    `{"switches": {"minecraft": {"description": "game server", "filters": ["label=com.docker.compose.service=minecraft"]}}}`
