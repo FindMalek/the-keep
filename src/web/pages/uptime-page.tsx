@@ -220,7 +220,7 @@ export function UptimePage({ uptime, kumaUrl, apps }: { uptime: UptimeStats; kum
               <span className={down.length ? "level-crit" : ""}>
                 {uptime.monitors.length - down.length}/{uptime.monitors.length} up
               </span>{" "}
-              · checked every 60s · alerts via ntfy
+              · checked every 60s · alerts in telegram and ntfy
             </>
           ) : (
             <span className="level-crit">uptime kuma unreachable</span>

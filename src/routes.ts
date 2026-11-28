@@ -6,7 +6,7 @@ import { isParsedSession } from "./sessions/validate";
 import type { ActionRecord, ModelPrice, SessionsPayload } from "./shared/types";
 
 /** Client-side routes; each serves the app shell. */
-export const PAGE_PATHS = ["/", "/apps", "/system", "/jobs", "/logs", "/activity", "/sessions", "/media", "/overview", "/uptime", "/buckets"];
+export const PAGE_PATHS = ["/", "/apps", "/system", "/jobs", "/logs", "/activity", "/sessions", "/media", "/overview", "/uptime", "/buckets", "/checks"];
 
 export interface ApiDeps {
   sessions: SessionStore;

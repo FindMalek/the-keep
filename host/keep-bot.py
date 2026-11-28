@@ -14,6 +14,7 @@ Nothing that changes the box runs without a tap from the owner, except the netwo
 container once. Shell commands also need the PIN, entered on a button keypad so it never sits in the chat.
 """
 
+import glob
 import hmac
 import http.client
 import json
@@ -334,6 +335,8 @@ def safe_send(*args, **kwargs):
 
 
 def log_action(text):
+    with LOCK:
+        STATE["action_log"] = (STATE.get("action_log") or [])[-79:] + [{"at": time.time(), "text": text[:500]}]
     safe_send("actions", text)
 
 
@@ -1071,6 +1074,8 @@ def describe(action):
         "shell": lambda: f"run as root: {action.get('arg')}",
         "cleanup": lambda: "docker cleanup: " + cleanup_summary(action),
         "tidy": lambda: "run keep-tidy (cache and log cleanup)",
+        "tidy_full": lambda: "run keep-tidy and drop docker build cache unused for 7+ days",
+        "redeploy": lambda: f"redeploy {action.get('arg')} through dokploy",
     }.get(kind, lambda: kind)()
 
 
@@ -1177,6 +1182,11 @@ def perform(action):
             return f"unknown job {arg}"
         code, out = run(["systemctl", "start", "--no-block", f"{arg}.service"])
         return f"started {arg}; its result lands in ⚙️ jobs" if code == 0 else f"failed: {clip(out, 400)}"
+    if kind == "redeploy":
+        return redeploy(arg)
+    if kind == "tidy_full":
+        run(["systemctl", "start", "--no-block", "keep-tidy.service"])
+        return "keep-tidy started; build cache: " + prune_old_build_cache()
     if kind == "tidy":
         run(["systemctl", "start", "--no-block", "keep-tidy.service"])
         return "keep-tidy started"
@@ -1199,6 +1209,425 @@ def perform(action):
         threading.Timer(3, lambda: run(["systemctl", "reboot"])).start()
         return "rebooting now; i'll post when it's back"
     return f"unknown action {kind}"
+
+
+# ---------------------------------------------------------------- routes and dokploy: which app serves a site
+
+DYNAMIC = "/etc/dokploy/traefik/dynamic"
+ROUTES = {"at": 0, "map": {}}
+DOKPLOY = {"at": 0, "apps": {}}
+
+
+def routes():
+    """hostname -> backends (swarm service or container names), from Traefik's file config and Docker labels."""
+    if time.time() - ROUTES["at"] < 300:
+        return ROUTES["map"]
+    found = {}
+
+    def add(host, target):
+        found.setdefault(host.lower(), set()).add(target)
+
+    for path in glob.glob(f"{DYNAMIC}/*.yml"):
+        try:
+            text = open(path).read()
+        except OSError:
+            continue
+        hosts, service_of, urls, current = {}, {}, {}, None
+        for line in text.splitlines():
+            stripped, indent = line.strip(), len(line) - len(line.lstrip())
+            if indent == 4 and stripped.endswith(":"):
+                current = stripped[:-1]
+            elif current and stripped.startswith("rule:"):
+                hosts[current] = re.findall(r"Host\(`([^`]+)`\)", stripped)
+            elif current and stripped.startswith("service:"):
+                service_of[current] = stripped.split(":", 1)[1].strip()
+            elif current and stripped.startswith("- url:"):
+                match = re.match(r"- url:\s*https?://([^:/\s]+)", stripped)
+                if match:
+                    urls.setdefault(current, []).append(match.group(1))
+        for router, names in hosts.items():
+            for backend in urls.get(service_of.get(router, ""), []):
+                for host in names:
+                    add(host, backend)
+    _, listing = run(["docker", "ps", "--format", "{{.Names}}\t{{.Labels}}"], 30)
+    for line in listing.splitlines():
+        name, _, labels = line.partition("\t")
+        for host in re.findall(r"Host\(`([^`]+)`\)", labels):
+            add(host, name)
+    code, names = run(["docker", "service", "ls", "--format", "{{.Name}}"], 30)
+    if code == 0 and names.strip():
+        _, specs = run(["docker", "service", "inspect", "--format", "{{.Spec.Name}}\t{{json .Spec.Labels}}", *names.split()], 60)
+        for line in specs.splitlines():
+            name, _, labels = line.partition("\t")
+            for host in re.findall(r"Host\(`([^`]+)`\)", labels):
+                add(host, name)
+    ROUTES.update(at=time.time(), map={h: sorted(t) for h, t in found.items()})
+    return ROUTES["map"]
+
+
+def dokploy_apps():
+    """Dokploy appName -> (kind, id, label). One API call per app, so cached for 6 h."""
+    if DOKPLOY["apps"] and time.time() - DOKPLOY["at"] < 6 * 3600:
+        return DOKPLOY["apps"]
+    code, out = run(["dk", "GET", "project.all"], 60)
+    try:
+        projects = json.loads(out)
+    except ValueError:
+        return DOKPLOY["apps"]
+    apps = {}
+    for project in projects:
+        for env in project.get("environments") or []:
+            for kind, field, key in (("application", "applications", "applicationId"), ("compose", "compose", "composeId")):
+                for item in env.get(field) or []:
+                    _, one = run(["dk", "GET", f"{kind}.one?{key}={item[key]}"], 30)
+                    try:
+                        app_name = json.loads(one).get("appName")
+                    except (ValueError, AttributeError):
+                        continue
+                    if app_name:
+                        apps[app_name] = (kind, item[key], f"{project.get('name')}/{env.get('name')}/{item.get('name')}")
+    DOKPLOY.update(at=time.time(), apps=apps)
+    return apps
+
+
+def app_of(target):
+    row, _ = find_container(target)
+    candidates = ([row.get("swarm"), row.get("project"), row["name"]] if row else []) + [target]
+    apps = dokploy_apps()
+    return next((c for c in candidates if c and c in apps), None)
+
+
+def redeploy(target):
+    app = app_of(target)
+    if not app:
+        return f"refused: {target} is not a Dokploy app"
+    kind, app_id, label = dokploy_apps()[app]
+    body = json.dumps({"applicationId": app_id} if kind == "application" else {"composeId": app_id})
+    code, out = run(["dk", "POST", f"{kind}.redeploy", body], 60)
+    return f"redeploy of {label} started (takes a few minutes)" if code == 0 else f"failed: {clip(out, 300)}"
+
+
+def site_code(host):
+    """HTTP status of a site through the local Traefik (0 = no answer)."""
+    _, out = run(["curl", "-sk", "-o", "/dev/null", "-w", "%{http_code}", "-m", "15",
+                  "--resolve", f"{host}:443:127.0.0.1", f"https://{host}/"], 25)
+    return int(out) if out.strip().isdigit() else 0
+
+
+def site_ok(host):
+    return 0 < site_code(host) < 500
+
+
+def site_report(host):
+    host = host.lower().strip().removeprefix("https://").removeprefix("http://").split("/")[0]
+    backends = routes().get(host, [])
+    lines = [f"{host}: answers {site_code(host) or 'nothing'} through the local traefik"]
+    rows = containers()
+    for backend in backends:
+        match = [r for r in rows if r["name"] == backend or r["swarm"] == backend or r["project"] == backend]
+        states = ", ".join(f"{r['name']} {r['status']}" for r in match[:4]) or "no container found"
+        lines.append(f"• backend {backend} (dokploy app: {app_of(backend) or 'no'}): {states}")
+    if not backends:
+        lines.append("no traefik route found for this host")
+    return "\n".join(lines)
+
+
+def container_ok(target):
+    rows = containers()
+    match = [r for r in rows if r["name"] == target or r["swarm"] == target or (r["swarm"] and target.startswith(r["swarm"] + "."))]
+    return bool(match) and any(r["state"] == "running" and not r["unhealthy"] for r in match) \
+        and not any(r["state"] == "restarting" for r in match)
+
+
+# ---------------------------------------------------------------- guards: fix it before anyone has to look
+
+GUARDING = set()
+
+
+def guard(target, title, steps, key=None):
+    """Try steps [(label, do() -> str, check() -> bool, wait seconds)] until one fixes it; else escalate to the AI.
+    At most 3 runs per target in 6 h, so a guard can't loop."""
+    with LOCK:
+        if target in GUARDING:
+            return
+        history_of = [t for t in STATE.setdefault("guards", {}).get(target, []) if t > time.time() - 6 * 3600]
+        if len(history_of) >= 3:
+            STATE["guards"][target] = history_of
+            return escalate(title, ["guards already ran 3 times in 6 hours, stopped retrying"], key)
+        STATE["guards"][target] = history_of + [time.time()]
+        GUARDING.add(target)
+
+    def work():
+        tried = []
+        anchor = (STATE["messages"].get(key) or {}).get("id") if key else None
+        try:
+            for label, do, check, wait in steps:
+                try:
+                    result = do() or ""
+                except Exception as error:  # noqa: BLE001
+                    result = f"failed: {error}"
+                tried.append(f"{label} → {result.splitlines()[0][:160] if result else 'done'}")
+                safe_send("alerts", f"🛠 {label}\n→ {result[:500]}", reply_to=anchor, silent=True)
+                log_action(f"🛠 guard · {title}\n{label} → {result.splitlines()[0][:200] if result else 'done'}")
+                time.sleep(wait)
+                if check():
+                    safe_send("alerts", f"✅ fixed automatically: {title} ({label})", reply_to=anchor, silent=True)
+                    log_action(f"✅ guard fixed · {title} · by {label}")
+                    return
+            escalate(title, tried, key)
+        except Exception:  # noqa: BLE001
+            log("guard failed:", traceback.format_exc())
+        finally:
+            GUARDING.discard(target)
+            save_state()
+
+    threading.Thread(target=work, daemon=True).start()
+
+
+def escalate(title, tried, key=None):
+    anchor = (STATE["messages"].get(key) or {}).get("id") if key else None
+    message_id = safe_send("alerts", "❌ couldn't fix automatically: " + title + "\ntried:\n" + "\n".join(f"• {t}" for t in tried)
+                           + "\n\nthe ai is digging into it…", reply_to=anchor, silent=False)
+    ai_async(TOPIC_IDS["alerts"], (
+        f"[guard escalation] {title}\nThe automatic guards tried:\n" + "\n".join(tried) + "\nand it is still broken. "
+        "Find the root cause with your tools. If a safe action you are allowed to take now would fix it, take it and verify. "
+        "Otherwise give a short diagnosis and put the concrete next fix on a button (propose_*; propose_shell with the exact "
+        "commands if nothing else fits). If it needs a human outside the box (hardware, a provider, DNS at the registrar, "
+        "an account), say exactly what and where."), message_id)
+
+
+def site_steps(host, check):
+    backends = routes().get(host.lower(), [])
+    steps = [(f"restart {b}", (lambda b=b: perform({"do": "restart", "arg": b})), check, 60) for b in backends[:3]]
+    app = next((b for b in backends if app_of(b)), None)
+    if app:
+        steps.append((f"redeploy {app} through dokploy", lambda: redeploy(app), check, 300))
+    if not backends:
+        steps.append(("restart traefik", lambda: do_fix("traefik"), check, 30))
+    return steps
+
+
+def container_steps(name):
+    row, _ = find_container(name)
+    target = (row or {}).get("swarm") or name
+    steps = [(f"restart {target}", lambda: perform({"do": "restart", "arg": target}), lambda: container_ok(target), 90)]
+    if app_of(target):
+        steps.append((f"redeploy {target} through dokploy", lambda: redeploy(target), lambda: container_ok(target), 300))
+    return target, steps
+
+
+def job_steps(name):
+    started = time.time()
+
+    def check():
+        for _ in range(45):
+            job = next((j for j in jobs() if j["name"] == name), {})
+            if (job.get("lastRun") or 0) >= started - 5 and job.get("lastResult") not in (None, "running"):
+                return job.get("lastResult") != "failed"
+            time.sleep(20)
+        return False
+
+    return [(f"rerun {name}", lambda: perform({"do": "run", "arg": name}), check, 0)]
+
+
+def disk_steps(path):
+    def check():
+        usage = shutil.disk_usage(path)
+        return usage.used / usage.total < 0.88
+
+    return [("run keep-tidy", lambda: perform({"do": "tidy"}), check, 240),
+            ("drop docker build cache unused for 7+ days", prune_old_build_cache, check, 10)]
+
+
+def prune_old_build_cache():
+    _, out = run(["docker", "builder", "prune", "-af", "--filter", "until=168h"], 900)
+    return (out.strip().splitlines() or ["done"])[-1]
+
+
+def tailscale_state():
+    code, out = run(["tailscale", "status", "--json"], 15)
+    try:
+        return json.loads(out).get("BackendState") if code == 0 else "not answering"
+    except ValueError:
+        return "not answering"
+
+
+def dns_ok():
+    try:
+        socket.getaddrinfo("api.telegram.org", 443)
+        return True
+    except OSError:
+        return False
+
+
+def watch_network():
+    seen = STATE["seen"]
+    state = tailscale_state()
+    seen["ts_bad"] = seen.get("ts_bad", 0) + 1 if state != "Running" else 0
+    if seen["ts_bad"] == 3:
+        send("alerts", f"🔴 tailscale is {state}", key="net:tailscale")
+        guard("net:tailscale", f"tailscale is {state}",
+              [("restart tailscale", lambda: do_fix("tailscale"), lambda: tailscale_state() == "Running", 20)], "net:tailscale")
+    elif seen["ts_bad"] == 0 and "net:tailscale" in STATE["messages"]:
+        send("alerts", "🟢 tailscale is connected again", key="net:tailscale")
+        STATE["messages"].pop("net:tailscale", None)
+    seen["dns_bad"] = seen.get("dns_bad", 0) + 1 if online() and not dns_ok() else 0
+    if seen["dns_bad"] == 3:
+        send("alerts", "🔴 dns on the box is failing (the bot uses dns-over-https meanwhile)", key="net:dns")
+        guard("net:dns", "dns on the box is failing", [("restart systemd-resolved", lambda: do_fix("dns"), dns_ok, 10),
+                                                        ("restart adguard", lambda: do_fix("adguard"), dns_ok, 30)], "net:dns")
+    elif seen["dns_bad"] == 0 and "net:dns" in STATE["messages"]:
+        send("alerts", "🟢 dns works again", key="net:dns")
+        STATE["messages"].pop("net:dns", None)
+
+
+# ---------------------------------------------------------------- healthchecks.io: checks per job, and data for the dashboard
+
+
+def hc_api(method, path, body=None):
+    status, raw = https(method, f"https://healthchecks.io/api/v3/{path}", json.dumps(body).encode() if body is not None else None,
+                        {"X-Api-Key": ENV.get("HC_API_KEY", ""), "Content-Type": "application/json"}, 30)
+    if status >= 300:
+        raise RuntimeError(f"healthchecks {status}: {raw[:200]!r}")
+    return json.loads(raw or b"{}")
+
+
+def schedule_period(schedule):
+    """(timeout, grace) in seconds for a jobs.json schedule, or None when it can't be told."""
+    text = (schedule or "").lower()
+    match = re.match(r"every (\d+)\s*(min|m|h)", text)
+    if match:
+        seconds = int(match.group(1)) * (3600 if match.group(2) == "h" else 60)
+        return seconds, max(600, seconds)
+    if re.match(r"(mon|tue|wed|thu|fri|sat|sun)", text) or "weekly" in text:
+        return 7 * 86400, 6 * 3600
+    if "month" in text or text.startswith("first"):
+        return 31 * 86400, 86400
+    if text.startswith(("daily", "nightly")) or "*-*-* " in text:
+        return 86400, 2 * 3600
+    return None
+
+
+def hc_sync():
+    if not ENV.get("HC_API_KEY"):
+        return
+    telegram = ",".join(c["id"] for c in hc_api("GET", "channels/").get("channels", []) if c["kind"] == "telegram")
+    wanted = {"keep-heartbeat": (60, 180, "the box is alive: keep-heartbeat pings every minute"),
+              "keep-bot": (60, 300, "the telegram bot is alive: it pings every minute")}
+    for job in jobs():
+        if job["name"] == "keep-heartbeat" or (job.get("lastRun") is None and job["name"] != "keep-backup"):
+            continue  # never ran here (planned or not started yet): a check would only raise false alarms
+        period = schedule_period(job.get("schedule"))
+        if period:
+            wanted[job["name"]] = (*period, f"{job.get('description', '')} · {job.get('schedule')}")
+    checks = hc_api("GET", "checks/").get("checks", [])
+    by_slug = {c.get("slug"): c for c in checks}
+    synced = STATE["seen"].setdefault("hc_synced", {})
+    for slug, (timeout, grace, desc) in wanted.items():
+        current = by_slug.get(slug) or {}
+        signature = f"{timeout}/{grace}/{telegram}/{desc}"
+        if current.get("timeout") == timeout and current.get("grace") == grace and synced.get(slug) == signature:
+            continue
+        hc_api("POST", "checks/", {"name": slug, "slug": slug, "timeout": timeout, "grace": grace, "desc": desc[:200],
+                                   "channels": telegram or "*", "unique": ["slug"]})
+        synced[slug] = signature
+    for check in checks:
+        unused = check.get("slug", "").startswith("keep-") and check.get("slug") not in wanted
+        if (check.get("name") == "My First Check" or unused) and not check.get("n_pings") and check.get("update_url"):
+            hc_api("DELETE", "checks/" + check["update_url"].rstrip("/").rsplit("/", 1)[-1])
+    export = []
+    for check in hc_api("GET", "checks/").get("checks", []):
+        uuid_ = (check.get("update_url") or "").rstrip("/").rsplit("/", 1)[-1]
+        try:
+            pings = hc_api("GET", f"checks/{uuid_}/pings/").get("pings", [])
+        except (RuntimeError, OSError, ValueError):
+            pings = []
+        try:
+            flips = hc_api("GET", f"checks/{uuid_}/flips/?seconds=2592000")
+        except (RuntimeError, OSError, ValueError):
+            flips = []
+        export.append({"name": check.get("name"), "slug": check.get("slug"), "desc": check.get("desc"),
+                       "status": check.get("status"), "timeout": check.get("timeout"), "grace": check.get("grace"),
+                       "nPings": check.get("n_pings"), "lastPing": check.get("last_ping"), "nextPing": check.get("next_ping"),
+                       "pings": [{"n": p.get("n"), "type": p.get("type"), "date": p.get("date"), "duration": p.get("duration")}
+                                 for p in pings[:100]],
+                       "flips": flips if isinstance(flips, list) else []})
+    with open(f"{DATA}/healthchecks.json.tmp", "w") as handle:
+        json.dump({"updatedAt": int(time.time()), "checks": export}, handle)
+    os.chmod(f"{DATA}/healthchecks.json.tmp", 0o644)
+    os.replace(f"{DATA}/healthchecks.json.tmp", f"{DATA}/healthchecks.json")
+
+
+# ---------------------------------------------------------------- mail: n8n hands messages and reply drafts to Telegram
+
+MAIL_READY = {"done": False}
+
+
+def keep_mail(sql):
+    db = n8n_db()
+    if not db:
+        raise RuntimeError("n8n database container not found")
+    code, out = run(["docker", "exec", "-i", db, "sh", "-c",
+                     'psql -X -qAt -v ON_ERROR_STOP=1 -U "$POSTGRES_USER" -d keep_mail'], 60, sql + ";\n")
+    if code != 0:
+        raise RuntimeError(clip(out, 400))
+    lines = [l for l in out.strip().splitlines() if l.strip()]
+    return json.loads(lines[-1]) if lines else None
+
+
+def mail_setup():
+    keep_mail("""CREATE TABLE IF NOT EXISTS telegram_outbox (id serial PRIMARY KEY, topic text NOT NULL DEFAULT 'mail',
+          text text NOT NULL, buttons jsonb, created_at timestamptz NOT NULL DEFAULT now(), sent_at timestamptz);
+        ALTER TABLE reply_drafts ADD COLUMN IF NOT EXISTS subject text, ADD COLUMN IF NOT EXISTS body text,
+          ADD COLUMN IF NOT EXISTS acted text, ADD COLUMN IF NOT EXISTS acted_at timestamptz;
+        INSERT INTO settings (key, value) SELECT 'mail_action_secret', md5(random()::text || clock_timestamp()::text)
+          WHERE NOT EXISTS (SELECT 1 FROM settings WHERE key = 'mail_action_secret');
+        SELECT 'null'""")
+
+
+def watch_mail():
+    if not n8n_db():
+        return
+    if not MAIL_READY["done"]:
+        mail_setup()
+        MAIL_READY["done"] = True
+    rows = keep_mail("""SELECT coalesce(json_agg(x ORDER BY x.id), '[]') FROM (SELECT id, topic, text, buttons
+        FROM telegram_outbox WHERE sent_at IS NULL ORDER BY id LIMIT 20) x""") or []
+    for row in rows:
+        buttons = [[(label, action) for label, spec in (row.get("buttons") or []) for action in [outbox_action(spec)] if action]]
+        topic = row["topic"] if row["topic"] in TOPICS else "mail"
+        send(topic, row["text"][:3900], buttons=[b for b in buttons if b] or None, silent=topic not in ("alerts", "mail"))
+        keep_mail(f"UPDATE telegram_outbox SET sent_at = now() WHERE id = {int(row['id'])}; SELECT 'null'")
+    last = STATE["seen"].get("drafts_at")
+    if last is None:
+        STATE["seen"]["drafts_at"] = datetime.now(timezone.utc).isoformat()
+        return
+    drafts = keep_mail(f"""SELECT coalesce(json_agg(x ORDER BY x.created_at), '[]') FROM (SELECT draft_id, to_addr, kind,
+        subject, body, created_at FROM reply_drafts WHERE draft_id IS NOT NULL AND acted IS NULL
+        AND created_at > {sql_text(last)}::timestamptz) x""") or []
+    for d in drafts:
+        text = (f"✉️ reply draft · {d['kind']}\nto {d['to_addr']}" + (f"\nre: {d['subject']}" if d.get("subject") else "")
+                + (f"\n\n{d['body']}" if d.get("body") else "\n\n(the text is in gmail drafts)"))
+        send("mail", text[:3900], silent=False, buttons=[
+            [("✅ send", {"do": "mail", "arg": "send", "draft": d["draft_id"], "to": d["to_addr"]}),
+             ("🗑 discard", {"do": "mail", "arg": "discard", "draft": d["draft_id"], "to": d["to_addr"]})],
+            [("✏️ edit in gmail", "url:https://mail.google.com/mail/u/0/#drafts")]])
+        STATE["seen"]["drafts_at"] = d["created_at"]
+
+
+def mail_action(action, draft_id):
+    if action not in ("send", "discard") or not re.fullmatch(r"[\w-]+", draft_id or ""):
+        return "refused: bad mail action"
+    secret = keep_mail("SELECT to_json(value) FROM settings WHERE key = 'mail_action_secret'")
+    app = next((r["name"] for r in containers() if re.search(r"-n8n-\d+$", r["name"]) and r["state"] == "running"), None)
+    if not app or not secret:
+        return "failed: n8n is not running"
+    url = f"http://127.0.0.1:5678/webhook/keep-mail-action?action={action}&draft={draft_id}&secret={secret}"
+    code, out = run(["docker", "exec", app, "wget", "-qO-", "-T", "60", url], 90)
+    if code != 0:
+        return f"failed: n8n answered {clip(out, 200) or code}"
+    keep_mail(f"UPDATE reply_drafts SET acted = {sql_text(action)}, acted_at = now() WHERE draft_id = {sql_text(draft_id)}; SELECT 'null'")
+    return "sent" if action == "send" else "discarded"
 
 
 # ---------------------------------------------------------------- the AI
@@ -1240,6 +1669,19 @@ AI_TOOLS = [
      {"question": ("string", "the question with the relevant facts", True),
       "options": ("array", "2-10 short option labels (max 40 chars each)", True),
       "multi": ("boolean", "allow choosing several, then a Done button")}),
+    ("site_route", "Which containers/services serve a public hostname (Traefik config), their state, the Dokploy app, and what the site answers right now through the local Traefik.",
+     {"host": ("string", "hostname, e.g. api.example.com", True)}),
+    ("recent_actions", "The last actions on the box: automatic guards, button taps and AI actions, with their results. Check it before repeating a fix.", {}),
+    ("restart_now", "ACT NOW: restart one container or swarm service. Only when the owner asked you to fix/restart (or a guard escalation hands it to you) AND your evidence shows this is the broken part.",
+     {"container": ("string", "container or service name (fuzzy)", True), "reason": ("string", "the evidence, one line", True)}),
+    ("redeploy_now", "ACT NOW: redeploy a Dokploy app (pull/rebuild and start). For when a restart did not help, or the app's containers are gone or broken.",
+     {"app": ("string", "container, service or Dokploy app name", True), "reason": ("string", "the evidence, one line", True)}),
+    ("run_job_now", "ACT NOW: run a keep-* job, e.g. rerun one that failed after fixing its cause.",
+     {"job": ("string", "job name", True), "reason": ("string", "why", True)}),
+    ("fix_now", "ACT NOW: a built-in repair: " + "; ".join(f"{k} = {v}" for k, v in FIXES.items() if k != "docker") + ". (docker needs propose_fix.)",
+     {"target": ("string", "the repair", True), "reason": ("string", "the evidence", True)}),
+    ("tidy_now", "ACT NOW: safe disk cleanup: keep-tidy (caches, logs) plus Docker build cache unused for 7+ days.",
+     {"reason": ("string", "why", True)}),
     ("propose_restart", "Propose restarting a container or swarm service; the owner gets a button.",
      {"container": ("string", "container name or part", True), "reason": ("string", "one line why", True)}),
     ("propose_run_job", "Propose running a keep-* job now.", {"job": ("string", "job name", True), "reason": ("string", "why", True)}),
@@ -1274,33 +1716,52 @@ def tool_schema():
     return out
 
 
-SYSTEM_PROMPT = """You are "the keep", the operator of a self-hosted home server (hostname {host}) that you run for its owner. You talk to the owner in a private Telegram group with topics. You are their sysadmin: sharp, calm, precise, and you know this box inside out because you look things up instead of guessing.
+SYSTEM_PROMPT = """You are "the keep", the operator of the owner's self-hosted server {host}. You run it for them and talk to them in a private Telegram group with topics. The owner is often travelling with only a phone: keep everything working with as little of their time as possible. You are a careful senior sysadmin: find the real cause, fix the broken part, verify the fix, report in a few lines.
 
-The box: Ubuntu, root access through your tools. Dokploy runs the apps (Docker Swarm services and compose projects) behind Traefik. Tailscale for private access, AdGuard Home for DNS, Uptime Kuma for uptime checks, n8n for automations (mail workflows among them), Garage (S3) for buckets, Backrest for backups to a separate HDD, healthchecks.io watches the box from outside. keep-* systemd timers do housekeeping (tidy, cleanup, backups, smart, ddns, reachability, upgrades). A dashboard records metric history (cpu, memory, temperatures, network, disks, buckets, uptime) that the metric tool reads.
+The box: Ubuntu, root access through your tools. Dokploy runs the apps (Docker Swarm services and compose projects) behind Traefik. Tailscale for private access, AdGuard Home for DNS, Uptime Kuma for uptime checks, n8n for automations (the mail workflows), Garage (S3) for buckets, Backrest for backups to a separate HDD, healthchecks.io watches the box from outside. keep-* systemd timers do housekeeping (tidy, cleanup, backups, smart, ddns, reachability, upgrades). A dashboard records metric history that the metric tool reads.
 
 Right now ({now}, {tz}):
 {snapshot}
 
 The conversation is in {topic}.
 
-Where things are (use the right tool):
-- keep-* jobs are systemd units, not containers: jobs for the schedule and results, host_logs(unit=<job>) for what a run printed.
-- Public sites as seen from outside: dashboard_data("reachability"). Backups: dashboard_data("backrest-status"). Disk space per app: dashboard_data("usage"). Drive health: dashboard_data("smart"). Logins, sudo, boots: dashboard_data("activity"). Tailnet devices: dashboard_data("network-devices").
-- Uptime checks: uptime_monitors. Apps and services: list_containers / container_logs (fuzzy names work: "n8n", "traefik", "lehoetel"). Swarm services: readonly_command("docker service ls").
-- n8n: n8n_workflows → n8n_executions → n8n_execution(id) for what each node did; container_logs("n8n") for the server log.
-- Docker disk: docker_space. Metrics over time: metric.
+Automatic guards already run on the box: they restart and redeploy failing apps, rerun failed jobs, clean full disks and repair DNS and Tailscale, and they log every step in 🧾 actions. recent_actions shows them. Don't repeat a step a guard just tried unless something changed; build on what it learned.
 
-How you work:
-- Be specific: name the exact sites, containers, jobs, sizes and times involved, never just "some".
-- Investigate first. Call tools to get real data before you answer; chain them (status → logs → metrics → journal) until you know the cause. Never invent numbers, names, ids or causes. If something can't be known, say so.
-- You cannot change anything yourself. Changes go through propose_* tools, which show the owner a button. Never say something is done until a result comes back. Prefer the least disruptive fix (restart one container before restarting docker; old build cache before all images).
-- When there is a real choice — what to delete, which of several containers, how aggressive — use ask_user with buttons. Put the facts in the question (sizes, ages, what each item is), recommend one option, and keep labels short. Example: for "docker is eating my disk", call docker_space, then ask which of: build cache older than 7 days (size), all build cache (size), unused images (count, size), stopped containers, unused volumes (warn: data loss); then propose_cleanup with exactly that.
-- Volumes, databases and backups hold data. Never propose deleting them unless the owner explicitly picked them, and say plainly that it is irreversible.
-- Raw logs: when the owner asks for raw logs or the output is long, use as_file=true so they get a file, and give a 2-3 line summary of what's in it.
-- Charts: when a trend explains things (spikes, filling disks, temperatures), call metric with chart=true.
-- Write for a phone: short lines, plain words, no tables, no headings, at most a few bullets with "•". Use **bold** sparingly for the key fact and `code` for names. Lead with the answer, then the evidence. Include units and times (in {tz}).
-- Reply in the language the owner writes in.
-- If a tool fails, say what failed and try another route (e.g. readonly_command)."""
+What you may do:
+1. Read anything, anytime, without asking (all read tools).
+2. ACT NOW tools (restart_now, redeploy_now, run_job_now, fix_now, tidy_now): when the owner asks you to fix, restart, rerun, clean up or "do it" — or a guard escalation hands the problem to you — act yourself; do not hand the owner instructions. But only on evidence: first identify the exact broken component (site_route for a site, container_logs for a container, host_logs for a job, network_status for the network), then take the smallest action that addresses the cause, then verify with a read tool (site_route, list_containers, jobs, uptime_monitors, network_status) and report honestly whether it worked. Never act on a guess. If two targets are plausible, check both; if still unclear, ask_user.
+3. Buttons (propose_*): anything destructive or wide — deleting images, containers or volumes, restarting Docker, rebooting, arbitrary shell. Shell and volume deletion also need the owner's PIN.
+4. Never touch volumes, databases, backups, secrets or firewall rules unless the owner explicitly asks, and then only through a proposal that says plainly what is lost.
+
+Playbooks (follow them, adapt to the evidence):
+- Site down, 502 or 5xx: site_route(host). Backend stopped, unhealthy or restarting → container_logs for the error → if transient (OOM, a dependency was down, stuck) restart_now that backend → verify with site_route. Still failing, or the container is gone → redeploy_now its Dokploy app → wait and verify. Backend healthy but 502 → wrong port or route: look at the container logs and readonly_command("docker service ps <service>"). Several sites down at once → shared cause first: Traefik (fix_now traefik), DNS, network — not each app.
+- keep-reachability failing: dashboard_data("reachability") names the failing hosts and errors; handle each host:
+  • 502/5xx → site_route; if the backend container is missing or stopped → redeploy_now its Dokploy app (restart_now if it exists but is stuck).
+  • "dns points to <ip>, not the box" → the name is served somewhere else (e.g. Vercel) while Traefik still has a route for it: not fixable by restarting; say which route is stale and offer a proposal to remove it, or that DNS must change at the provider.
+  • "no public dns" → the record is missing at the DNS provider; say so.
+  • "dns says X, box is at Y" for the home record → fix_now ddns.
+  After fixing what you can, run_job_now keep-reachability and verify with jobs; clearly list what is fixed and what still needs the owner.
+- Budget: work in about 10 tool calls, then act or answer.
+- Container unhealthy or crash loop: container_logs (errors near the end). Code or config error (bad env, migration, syntax) → a restart won't help: say so, quote the error, offer redeploy or a proposal. Transient → restart_now. Memory → container_stats and metric mem.
+- Job failed: jobs, then host_logs(unit=<job>). Fix the cause on the box if there is one (disk, a service down), then run_job_now and verify with jobs.
+- Disk filling: metric disk + docker_space + dashboard_data("usage") → tidy_now first; anything bigger: ask_user with sizes, then propose_cleanup.
+- Network, Tailscale, DNS: network_status → fix_now the matching target → network_status again. A Tailscale login link must go to the owner as is.
+- n8n run failing: n8n_executions(status="error") → n8n_execution(id) → name the failing node and its error. Restart n8n only if the server itself is broken.
+- Something you can't fix (hardware, an outside provider, DNS at the registrar, an expired account or key): say exactly what is wrong, where to fix it, and offer propose_shell for anything that can be run on the box.
+
+Where things are:
+- keep-* jobs are systemd units, not containers: jobs for results, host_logs(unit=<job>) for output.
+- dashboard_data: "reachability" (public sites from outside), "backrest-status" (backups), "usage" (space per app), "smart" (drives), "activity" (logins, sudo, boots), "network-devices" (tailnet).
+- uptime_monitors for Kuma; list_containers / container_logs with fuzzy names ("n8n", "traefik", "lehoetel"); readonly_command("docker service ls") for swarm services.
+- n8n: n8n_workflows → n8n_executions → n8n_execution(id); container_logs("n8n") for the server log.
+- docker_space for Docker disk use, metric for history.
+
+Style:
+- Be specific: the exact sites, containers, jobs, sizes and times, never "some".
+- When there is a real choice (what to delete, which of several things, how far to go) use ask_user with the facts in the question and a recommended option first.
+- Raw logs or long output: as_file=true, plus a 2-3 line summary. Trends: metric with chart=true.
+- Write for a phone: short lines, plain words, no tables or headings, a few "•" bullets at most, **bold** for the key fact, `code` for names. Lead with the outcome ("fixed: …", "still down: …"), then the evidence. Times in {tz}.
+- Reply in the owner's language. If a tool fails, say so and try another route."""
 
 
 CONVERSATIONS = {}
@@ -1308,11 +1769,11 @@ THREAD_LOCKS = {}
 CHOICES = {}
 
 
-def groq(messages):
+def groq(messages, final=False):
     key = ENV.get("GROQ_API_KEY")
     if not key:
         raise RuntimeError("GROQ_API_KEY is missing in /etc/keep/bot.env")
-    body = {"model": MODEL, "messages": messages, "tools": tool_schema(), "tool_choice": "auto", "temperature": 0.2,
+    body = {"model": MODEL, "messages": messages, "tools": tool_schema(), "tool_choice": "none" if final else "auto", "temperature": 0.2,
             "max_completion_tokens": 4096, "reasoning_effort": ENV.get("AI_REASONING", "medium")}
     for attempt in range(3):
         status, raw = https("POST", "https://api.groq.com/openai/v1/chat/completions", json.dumps(body).encode(),
@@ -1394,9 +1855,61 @@ def tool_call(name, args, thread, reply_to):
                         "question": args.get("question", "")}
         send(thread, md_to_html(args.get("question", "choose:")), html=True, markup=choice_markup(cid), reply_to=reply_to)
         return "PAUSE: the question is shown with buttons. Stop here and wait; do not answer it yourself."
+    if name == "site_route":
+        return site_report(args.get("host", ""))
+    if name == "recent_actions":
+        return "\n".join(f"{local(a['at'], '%b %d %H:%M')} {a['text']}" for a in (STATE.get("action_log") or [])[-30:]) or "nothing yet"
+    if name in ACT_TOOLS:
+        return act(name, args, thread, reply_to)
     if name.startswith("propose_"):
         return propose(name, args, thread, reply_to)
     return f"unknown tool {name}"
+
+
+def follow_up_redeploy(target, thread, reply_to):
+    def check():
+        app = app_of(target) or target
+        ok = container_ok(app)
+        safe_send(thread, f"{'✅' if ok else '❌'} {app} {'is up after the redeploy' if ok else 'is still not running 6 minutes after the redeploy'}",
+                  reply_to=reply_to, silent=ok)
+        log_action(f"{'✅' if ok else '❌'} follow-up · redeploy of {app} → {'up' if ok else 'still down'}")
+        if not ok:
+            ai_async(thread, f"[follow-up] {app} is still not running 6 minutes after a redeploy. Find out why "
+                             "(docker service ps, its logs, the Dokploy build) and say what is needed.", reply_to)
+    threading.Timer(360, check).start()
+
+
+ACT_TOOLS = {"restart_now", "redeploy_now", "run_job_now", "fix_now", "tidy_now"}
+
+
+def act(name, args, thread, reply_to):
+    """The owner asked for it, so safe actions run without another tap; still capped per turn."""
+    convo = CONVERSATIONS.get(thread) or {}
+    convo["acts"] = convo.get("acts", 0) + 1
+    if convo["acts"] > 6:
+        return "refused: 6 actions in this turn already. Report what you did and ask the owner before doing more."
+    if name == "restart_now":
+        row, error = find_container(args.get("container", ""))
+        if error:
+            return error
+        action = {"do": "restart", "arg": row["swarm"] or row["name"]}
+    elif name == "redeploy_now":
+        action = {"do": "redeploy", "arg": args.get("app", "")}
+    elif name == "run_job_now":
+        action = {"do": "run", "arg": args.get("job", "")}
+    elif name == "fix_now":
+        if args.get("target") not in FIXES or args.get("target") == "docker":
+            return "refused: unknown target, or docker (use propose_fix for that)"
+        action = {"do": "fix", "arg": args["target"]}
+    else:
+        action = {"do": "tidy_full"}
+    result = perform(action)
+    safe_send(thread, f"🛠 {describe(action)}\n→ {result[:500]}", reply_to=reply_to, silent=True)
+    if action["do"] == "redeploy" and not result.startswith(("failed", "refused")):
+        follow_up_redeploy(action["arg"], thread, reply_to)
+        result += "\nA follow-up check runs by itself in 6 minutes and reports here; do not poll for it."
+    log_action(f"🤖 ai · {describe(action)}\nwhy: {str(args.get('reason', ''))[:200]}\n→ {result.splitlines()[0][:200] if result else 'done'}")
+    return result + "\nNow verify with a read tool before telling the owner it is fixed."
 
 
 def choice_markup(cid):
@@ -1460,20 +1973,28 @@ def ai_turn(thread, user_text, reply_to, context=None):
                                           tz=str(TZ), snapshot=snapshot, topic=TOPIC_CONTEXT.get(topic_of(thread), "a topic"))
             convo = CONVERSATIONS[thread] = {"messages": [{"role": "system", "content": prompt}], "at": time.time()}
         convo["at"] = time.time()
+        convo["acts"] = 0
         content = user_text if not context else f"{user_text}\n\n[the owner is replying to this message]\n{context}"
         convo["messages"].append({"role": "user", "content": content})
         try:
             tg("sendChatAction", chat_id=CHAT, message_thread_id=thread, action="typing")
         except Exception:  # noqa: BLE001
             pass
-        for _ in range(12):
-            message = groq(convo["messages"])
+        answered = False
+        for round_ in range(20):
+            try:
+                message = groq(convo["messages"], final=round_ == 19)
+            except RuntimeError:
+                if round_ != 19:
+                    raise
+                break
             calls = message.get("tool_calls") or []
             convo["messages"].append({"role": "assistant", "content": message.get("content") or "",
                                       **({"tool_calls": calls} if calls else {})})
             if not calls:
                 if (message.get("content") or "").strip():
                     send(thread, md_to_html(message["content"].strip()), html=True, reply_to=reply_to, silent=False)
+                answered = True
                 break
             paused = False
             for call in calls:
@@ -1489,11 +2010,16 @@ def ai_turn(thread, user_text, reply_to, context=None):
                 paused = paused or result.startswith("PAUSE")
                 convo["messages"].append({"role": "tool", "tool_call_id": call["id"], "content": clip(str(result), 9000)})
             if paused:
+                answered = True
                 break
+            if round_ == 15:
+                convo["messages"].append({"role": "user", "content": "[system] tool budget nearly used: act on what you know or give your answer now."})
             try:
                 tg("sendChatAction", chat_id=CHAT, message_thread_id=thread, action="typing")
             except Exception:  # noqa: BLE001
                 pass
+        if not answered:
+            send(thread, "i ran out of steps before finishing. say \"continue\" and i'll pick it up.", reply_to=reply_to)
         system, rest = convo["messages"][0], convo["messages"][1:]
         while len(rest) > 40:
             rest = rest[1:]
@@ -1784,6 +2310,18 @@ def on_callback(query):
             STATE["mutes"][action["arg"]] = time.time() + action.get("seconds", 3600)
         save_state()
         return answer(f"muted for {ago(time.time() - action.get('seconds', 3600))}")
+    if kind == "mail":
+        answer("sending…" if action["arg"] == "send" else "discarding…")
+        STATE["actions"].pop(aid, None)
+        result = mail_action(action["arg"], action.get("draft"))
+        ok = result in ("sent", "discarded")
+        try:
+            tg("editMessageReplyMarkup", chat_id=CHAT, message_id=message_id, reply_markup={"inline_keyboard": []})
+        except TgError:
+            pass
+        send(thread, f"{'✅' if ok else '⚠️'} {result} · draft to {action.get('to')}", reply_to=message_id)
+        log_action(f"✉️ mail · {action['arg']} draft to {action.get('to')} → {result}")
+        return save_state()
     if kind == "n8n_run":
         answer("loading…")
         return send(thread, n8n_execution(action["arg"]), reply_to=message_id)
@@ -1837,7 +2375,7 @@ def on_message(message):
 def outbox_action(spec):
     """Buttons other scripts may attach. Anything that changes the box still runs only on a tap."""
     kind, _, rest = spec.partition(":")
-    if kind in ("restart", "run", "logs", "journal", "fix", "chart"):
+    if kind in ("restart", "run", "logs", "journal", "fix", "chart", "redeploy"):
         arg, _, extra = rest.partition(":")
         return {"do": kind, "arg": arg, **({"range": extra} if kind == "chart" and extra else {})}
     if kind == "why":
@@ -1885,6 +2423,11 @@ def handle_outbox():
             send(item.get("topic") if item.get("topic") in TOPICS else "alerts", str(item.get("text", ""))[:3900],
                  key=item.get("key"), silent=item.get("silent"), html=bool(item.get("html")),
                  buttons=rows or None, photo=photo)
+            okey = str(item.get("key") or "")
+            if not item.get("resolved") and okey.startswith("site:"):
+                guard(okey, f"{okey[5:]} is unreachable from outside", site_steps(okey[5:], lambda h=okey[5:]: site_ok(h)), okey)
+            if not item.get("resolved") and okey.startswith("disk:/") and os.path.ismount(okey[5:]):
+                guard(okey, f"disk {okey[5:]} is filling up", disk_steps(okey[5:]), okey)
             if item.get("resolved") and item.get("key"):
                 with LOCK:
                     STATE["messages"].pop(item["key"], None)
@@ -1928,6 +2471,10 @@ def watch_kuma():
                            ("🔕 mute 1h", {"do": "mute", "arg": key, "seconds": 3600})]]
                  + ([[("open kuma", "url:" + ENV["KUMA_PUBLIC_URL"])]] if ENV.get("KUMA_PUBLIC_URL") else []))
             prev["down_at"] = since
+            host = urllib.parse.urlsplit(monitor["url"]).hostname if "://" in (monitor["url"] or "") else None
+            if host:
+                guard(key, f"{monitor['name']} is down ({host})",
+                      site_steps(host, lambda mid=mid: (kuma_monitors() or {}).get(mid, {}).get("status") == 1), key)
         elif fails == 0 and prev.get("fails", 0) >= 2:
             took = ago(prev.get("down_at", time.time()))
             message_id = send("alerts", f"🟢 {monitor['name']} is back · was down {took}\n{monitor['url']}", key=key)
@@ -1962,16 +2509,23 @@ def watch_containers():
         key = f"container:{name}"
         if problem and seen.get(name) != "problem" and not first:
             text = f"🔴 {name} {problem}\n{r['status']} · {r['image'].split('@')[0][:60]}"
-            if problem.startswith("crashed") and time.time() - restarted.get(name, 0) > 6 * 3600:
-                restarted[name] = time.time()
-                result = perform({"do": "restart", "arg": name})
-                text += f"\nauto-restarted once: {result}"
-                log_action(f"🧾 auto-restart {name} after it crashed (exit {r['exit']}) → {result}")
             send("alerts", text, key=key, buttons=[
                 [("📜 logs", {"do": "logs", "arg": name}), ("🔁 restart", {"do": "restart", "arg": name}),
                  ("🤖 why?", {"do": "ask", "arg": f"Container {name} {problem}. Look at its logs and the host and tell me why and what to do."})],
                 [("🔕 mute 6h", {"do": "mute", "arg": key, "seconds": 6 * 3600})]])
-        elif not problem and seen.get(name) == "problem":
+            if not problem.startswith("is unhealthy"):
+                target, steps = container_steps(name)
+                guard(f"container:{target}", f"{name} {problem}", steps, key)
+        if problem == "is unhealthy":
+            since = restarted.setdefault(f"unhealthy:{name}", time.time())
+            if time.time() - since > 300 and not restarted.get(f"guarded:{name}"):
+                restarted[f"guarded:{name}"] = time.time()
+                target, steps = container_steps(name)
+                guard(f"container:{target}", f"{name} has been unhealthy for 5 minutes", steps, key)
+        else:
+            restarted.pop(f"unhealthy:{name}", None)
+            restarted.pop(f"guarded:{name}", None)
+        if not problem and seen.get(name) == "problem":
             if key in STATE["messages"]:
                 send("alerts", f"🟢 {name} is fine again · {r['status']}", key=key)
                 with LOCK:
@@ -1992,13 +2546,14 @@ def watch_jobs():
             continue
         frequent = bool(re.match(r"every \d+\s*(min|m)\b", job.get("schedule") or ""))
         took = f" · {job['durationSec']:.0f}s" if isinstance(job.get("durationSec"), (int, float)) else ""
-        if (job.get("schedule") or "").startswith("daily") and name != "keep-heartbeat":
+        if name != "keep-heartbeat" and not job.get("planned"):
             hc_ping(name, result != "failed")
         key = f"job:{name}"
         if result == "failed" and (not frequent or prev.get("result") != "failed"):
             send("alerts", f"🔴 job {name} failed at {local(last)}\n{job.get('description', '')}", key=key, buttons=[
                 [("📜 log", {"do": "journal", "arg": name, "since": "1d"}), ("▶ retry", {"do": "run", "arg": name}),
                  ("🤖 why?", {"do": "ask", "arg": f"The job {name} failed. Read its journal and tell me why and what to do."})]])
+            guard(key, f"job {name} failed", job_steps(name), key)
         elif result != "failed" and prev.get("result") == "failed" and key in STATE["messages"]:
             send("alerts", f"🟢 job {name} works again · {local(last)}", key=key)
             with LOCK:
@@ -2051,6 +2606,17 @@ def watch_n8n():
             [("🔎 run details", {"do": "n8n_run", "arg": str(r["id"])}),
              ("📜 n8n logs", {"do": "logs", "arg": "n8n", "since": "1h"}),
              ("🤖 why?", {"do": "ask", "arg": f"n8n run #{r['id']} of '{r['workflow']}' failed. Look at the run and n8n's logs and explain what went wrong and how to fix it."})]])
+
+
+def watch_backups():
+    """Backrest runs on its own schedule; a new snapshot pings healthchecks (keep-backup) and lands in ⚙️ jobs."""
+    snapshots = (read_json(f"{DATA}/backrest-status.json", {}) or {}).get("snapshots") or []
+    newest = max((s.get("at") or 0 for s in snapshots), default=0) / 1000
+    last = STATE["seen"].get("backup_at")
+    STATE["seen"]["backup_at"] = max(newest, last or 0)
+    if last is not None and newest > last:
+        hc_ping("keep-backup")
+        safe_send("jobs", f"💾 backup snapshot at {local(newest)} · {len(snapshots)} snapshots available")
 
 
 def apt_upgradable():
@@ -2163,7 +2729,9 @@ def watchers():
     tick = 0
     while True:
         for name, fn, every in (("kuma", watch_kuma, 1), ("containers", watch_containers, 1), ("jobs", watch_jobs, 1),
-                                ("activity", watch_activity, 1), ("n8n", watch_n8n, 2), ("digest", send_digest, 1)):
+                                ("activity", watch_activity, 1), ("n8n", watch_n8n, 2), ("digest", send_digest, 1),
+                                ("network", watch_network, 1), ("mail", watch_mail, 1), ("healthchecks", hc_sync, 10),
+                                ("alive", lambda: hc_ping("keep-bot"), 1), ("backups", watch_backups, 5)):
             if tick % every:
                 continue
             try:
