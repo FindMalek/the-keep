@@ -244,6 +244,11 @@ const server = Bun.serve({
         return new Response(null, { status: 202 });
       },
     },
+    "/api/healthchecks": async () => {
+      // written by host/keep-bot.py from the healthchecks.io API
+      const file = Bun.file(`${config.dataDir}/healthchecks.json`);
+      return (await file.exists()) ? new Response(file, { headers: { "content-type": "application/json" } }) : new Response("no data", { status: 404 });
+    },
     "/api/ai-usage": {
       POST: async (request: Request) => {
         if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });

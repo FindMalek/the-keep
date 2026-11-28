@@ -9,6 +9,7 @@ import { useLiveData } from "./lib/use-live-data";
 import { ActivityPage } from "./pages/activity-page";
 import { AppsPage } from "./pages/apps-page";
 import { BucketsPage } from "./pages/buckets-page";
+import { ChecksPage } from "./pages/checks-page";
 import { HomePage } from "./pages/home-page";
 import { JobsPage } from "./pages/jobs-page";
 import { LogsPage } from "./pages/logs-page";
@@ -32,6 +33,7 @@ export function App() {
     { path: "/uptime", group: "infra", label: "uptime", icon: ICONS.uptime, alerts: downChecks, primary: true },
     { path: "/apps", group: "infra", label: "apps", icon: ICONS.apps, alerts: unhealthyApps, primary: true },
     { path: "/jobs", group: "infra", label: "jobs", icon: ICONS.jobs, alerts: failedJobs },
+    { path: "/checks", group: "infra", label: "checks", icon: ICONS.uptime },
     { path: "/logs", group: "infra", label: "logs", icon: ICONS.logs, primary: true },
     { path: "/activity", group: "infra", label: "activity", icon: ICONS.activity },
     { path: "/media", group: "personal", label: "media", icon: ICONS.media },
@@ -62,6 +64,8 @@ export function App() {
             <BucketsPage garage={snapshot.garage} />
           ) : path === "/uptime" ? (
             <UptimePage uptime={snapshot.uptime} kumaUrl={snapshot.links.kuma} apps={snapshot.apps} />
+          ) : path === "/checks" ? (
+            <ChecksPage />
           ) : path === "/activity" ? (
             <ActivityPage />
           ) : path === "/sessions" ? (
