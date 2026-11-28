@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { JournalStats, LogEntry, LogHistogram, LogPage } from "../../shared/types";
+import { CopyValue } from "../components/copy-value";
 import { DitherBars } from "../components/dither-bars";
 import { Select } from "../components/filter-bar";
 import { LogRow } from "../components/log-row";
@@ -32,6 +33,16 @@ interface Filters {
   units: string[];
   sources: string[];
   boot: string;
+}
+
+const LETTER = ["EMERG", "ALERT", "CRIT", "ERR", "WARN", "NOTICE", "INFO", "DEBUG"];
+
+/** Loaded entries as plain journal lines, oldest first, for pasting into a chat or an issue. */
+function entriesText(entries: LogEntry[]): string {
+  return [...entries]
+    .reverse()
+    .map((entry) => `${new Date(entry.at / 1000).toISOString()} ${LETTER[entry.priority] ?? "?"} ${entry.source}${entry.pid ? `[${entry.pid}]` : ""}: ${entry.message}`)
+    .join("\n");
 }
 
 function readFilters(search: URLSearchParams): Filters {
@@ -320,7 +331,14 @@ export function LogsPage({ journal, dozzle }: { journal: JournalStats; dozzle: s
         <Panel
           title="entries"
           meta={`${entries.length}${before ? "+" : ""} · newest first`}
-          actions={dozzle ? <Link href={dozzle}>container logs in dozzle</Link> : undefined}
+          actions={
+            <>
+              {entries.length > 0 && (
+                <CopyValue value={null} display={`copy ${entries.length} lines`} load={async () => entriesText(entries)} />
+              )}
+              {dozzle && <Link href={dozzle}>container logs in dozzle</Link>}
+            </>
+          }
           flush
         >
           {unseen > 0 && (
