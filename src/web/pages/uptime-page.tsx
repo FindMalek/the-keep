@@ -14,10 +14,10 @@ import { setQuery, useSearch } from "../lib/router";
 import { useRangeHistory } from "../lib/use-range-history";
 import { PHONE, useMedia } from "../lib/use-media";
 
-const RANGES = ["24h", "7d", "30d"] as const;
+const RANGES = ["24h", "7d", "30d", "90d", "1y"] as const;
 type Range = (typeof RANGES)[number];
-/** 30 min, 2 h and 8 h buckets. */
-const BUCKETS: Record<Range, number> = { "24h": 48, "7d": 84, "30d": 90 };
+/** 30 min, 2 h, 8 h, 1 day and 1 week buckets; 90d and 1y come from the daily rollup. */
+const BUCKETS: Record<Range, number> = { "24h": 48, "7d": 84, "30d": 90, "90d": 90, "1y": 52 };
 const FILTERS = ["all", "down", "dipped", "certs"] as const;
 
 function pct(value: number | null): string {

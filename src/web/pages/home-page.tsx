@@ -18,7 +18,7 @@ const TILE_SECONDS = 120;
 function storedRange(): RangeName {
   try {
     const value = localStorage.getItem(RANGE_KEY);
-    return RANGES.includes(value as RangeName) ? (value as RangeName) : "live";
+    return (RANGES as readonly (string | null)[]).includes(value) ? (value as RangeName) : "live";
   } catch {
     return "live";
   }
