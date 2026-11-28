@@ -1,0 +1,6 @@
+[Unit]
+Description=Delete PR previews whose pull request is closed
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/keep-previews

@@ -1,8 +1,8 @@
 [Unit]
-Description=Run keep-tidy weekly
+Description=Run keep-tidy daily
 
 [Timer]
-OnCalendar=Sun *-*-* 05:00:00
+OnCalendar=*-*-* 05:00:00
 Persistent=true
 
 [Install]

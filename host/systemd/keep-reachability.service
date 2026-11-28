@@ -1,0 +1,8 @@
+[Unit]
+Description=Check public sites the way an outside visitor reaches them
+After=network-online.target docker.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/keep-reachability
+TimeoutStartSec=4min
