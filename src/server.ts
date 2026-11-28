@@ -1,4 +1,5 @@
 import type { Server } from "bun";
+import { rename } from "node:fs/promises";
 import index from "./web/index.html";
 import { loadConfig } from "./lib/config";
 import { HistoryStore } from "./lib/history";
@@ -8,7 +9,8 @@ import { collectMemory } from "./collectors/memory";
 import { collectMounts, createDiskCollector } from "./collectors/storage";
 import { createNetworkCollector } from "./collectors/network";
 import { collectSensors } from "./collectors/sensors";
-import { newestRunAlerts, smart as collectSmart, smartHistory } from "./collectors/smart";
+import { smart as collectSmart } from "./collectors/smart";
+import { journal as collectJournal } from "./collectors/journal";
 import { createContainerCollector } from "./collectors/containers";
 import { createGarageCollector } from "./collectors/garage";
 import { checkServices } from "./collectors/services";
@@ -17,14 +19,16 @@ import { createAppsCollector } from "./collectors/apps";
 import { collectJobs, collectUsage, requestAction } from "./collectors/jobs";
 import { recordAiUsage } from "./collectors/ai-usage";
 import { SessionStore } from "./sessions/store";
-import { toHandoffMarkdown } from "./sessions/export";
-import { isParsedSession } from "./sessions/validate";
+import { createJournal } from "./collectors/logs";
+import { createGarageS3 } from "./collectors/garage-s3";
+import { apiRoutes, PAGE_PATHS } from "./routes";
 import { createKumaCollector } from "./collectors/kuma";
 import { createHomeCollector } from "./collectors/home";
 import { ViewerLog } from "./lib/viewers";
 import { readText } from "./lib/host";
 import { gated } from "./lib/gate";
 import type {
+  ActionRecord,
   ActivityPayload,
   DeployEvent,
   DokploySession,
@@ -55,7 +59,7 @@ const collectApps = createAppsCollector(
 
 const SECOND = 1000;
 
-const slow: Pick<Snapshot, "mounts" | "containers" | "garage" | "services" | "apps" | "jobs" | "uptime" | "usage" | "home" | "smart"> & {
+const slow: Pick<Snapshot, "mounts" | "containers" | "garage" | "services" | "apps" | "jobs" | "uptime" | "usage" | "home" | "smart" | "journal"> & {
   publicIp: string | null;
   dnsIp: string | null;
 } = {
@@ -68,6 +72,7 @@ const slow: Pick<Snapshot, "mounts" | "containers" | "garage" | "services" | "ap
   uptime: { reachable: false, monitors: [] },
   usage: { at: null, paths: {} },
   smart: { at: null, disks: [] },
+  journal: { at: null, diskBytes: null, capBytes: null, hours: [], top: [] },
   home: {
     music: { reachable: false, songs: 0, albums: 0, artists: 0, nowPlaying: [], recentlyAdded: [], lastImport: null },
     dns: { reachable: false, protection: false, queries: 0, blocked: 0, avgMs: 0, hourlyQueries: [], hourlyBlocked: [], topBlocked: [] },
@@ -89,26 +94,15 @@ function every(ms: number, task: () => Promise<void>): void {
 }
 
 // Each task writes only its own fields; they finish at different times.
-const ntfyUrl = process.env.KEEP_NTFY_URL;
-async function notify(message: string): Promise<void> {
-  if (ntfyUrl) await fetch(ntfyUrl, { method: "POST", body: message, signal: AbortSignal.timeout(5000) }).catch(() => {});
-}
-/** The `at` of the last keep-smart run seen. Starts as whatever is on disk, so a restart never re-sends old alerts. */
-let smartSeenAt: string | null = collectSmart().at;
-
 every(5 * SECOND, async () => {
   [slow.mounts, slow.containers, slow.jobs, slow.usage] = await Promise.all([
-    collectMounts(config.mounts),
+    collectMounts(config.mounts, config.backupMounts),
     collectContainers(),
     collectJobs(config.dataDir),
     collectUsage(config.dataDir),
   ]);
   slow.smart = collectSmart();
-  // A new daily run of keep-smart: tell me once if a disk got worse since the run before it.
-  if (slow.smart.at && slow.smart.at !== smartSeenAt) {
-    smartSeenAt = slow.smart.at;
-    for (const alert of newestRunAlerts(smartHistory(), slow.smart.at)) await notify(`disk: ${alert}`);
-  }
+  slow.journal = collectJournal();
 });
 const collectKuma = createKumaCollector(config.kumaUrl, config.kumaKeyPath);
 every(15 * SECOND, async () => {
@@ -163,6 +157,7 @@ async function tick(): Promise<void> {
     network,
     sensors,
     smart: slow.smart,
+    journal: slow.journal,
     containers: slow.containers,
     garage: slow.garage,
     services: slow.services,
@@ -210,53 +205,62 @@ async function tick(): Promise<void> {
 every(SECOND, tick);
 
 const sessionStore = new SessionStore(config.dataDir);
+every(24 * 3600 * SECOND, async () => {
+  await sessionStore.prices.refresh(sessionStore.providers());
+});
+const journal = createJournal({ command: config.journalctl, directory: config.journalDir });
+const garageS3 = config.garageS3 ? createGarageS3(config.garageS3) : null;
+const bucketDeletesPath = `${config.dataDir}/bucket-deletes.json`;
+let bucketDeletes: ActionRecord[] = JSON.parse((await readText(bucketDeletesPath)) ?? "[]") as ActionRecord[];
+function logBucketDelete(record: ActionRecord): void {
+  bucketDeletes = [record, ...bucketDeletes].slice(0, 200);
+  void Bun.write(bucketDeletesPath, JSON.stringify(bucketDeletes));
+}
 
 const server = Bun.serve({
   port: config.port,
   development: process.env.NODE_ENV !== "production",
   routes: gated({
-    "/": index,
-    "/apps": index,
-    "/system": index,
-    "/jobs": index,
-    "/activity": index,
-    "/sessions": index,
-    "/media": index,
-    "/overview": index,
-    "/uptime": index,
+    ...Object.fromEntries(PAGE_PATHS.map((path) => [path, index])),
+    ...apiRoutes({
+      sessions: sessionStore,
+      journal,
+      jobNames: () => slow.jobs.jobs.map((job) => job.name),
+      buckets: () => garageS3,
+      bucketNames: () => slow.garage.buckets.map((bucket) => bucket.name),
+      deleteBuckets: () => config.garageDeleteBuckets,
+      logBucketDelete,
+    }),
     "/api/actions": {
       POST: async (request: Request) => {
         // A custom header forces a CORS preflight, so other sites can't trigger actions from your browser.
         if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
         const body = (await request.json().catch(() => null)) as { action?: unknown } | null;
-        const accepted = typeof body?.action === "string" && (await requestAction(config.dataDir, body.action));
+        const requester = request.headers.get("x-real-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+        const accepted = typeof body?.action === "string" && (await requestAction(config.dataDir, body.action, requester));
         if (!accepted) return new Response("unknown action", { status: 400 });
         // Pick up the agent's result quickly instead of waiting for the next 5 s refresh.
         setTimeout(async () => (slow.jobs = await collectJobs(config.dataDir)), 3000);
         return new Response(null, { status: 202 });
       },
     },
-    "/api/sessions": {
-      GET: () => Response.json({ sessions: sessionStore.list(200), usage: sessionStore.usageByDay(Date.now() - 90 * 86_400_000) }),
-      POST: async (request: Request) => {
-        if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
-        const body = await request.json().catch(() => null);
-        const batch = Array.isArray(body) ? body : [body];
-        if (!batch.length || !batch.every(isParsedSession)) return new Response("bad payload", { status: 400 });
-        for (const parsed of batch) sessionStore.upsert(parsed);
-        return new Response(null, { status: 202 });
-      },
+    "/api/healthchecks": async () => {
+      // written by host/keep-bot.py from the healthchecks.io API
+      const file = Bun.file(`${config.dataDir}/healthchecks.json`);
+      return (await file.exists()) ? new Response(file, { headers: { "content-type": "application/json" } }) : new Response("no data", { status: 404 });
     },
-    "/api/session": (request: Request) => {
-      const params = new URL(request.url).searchParams;
-      const parsed = sessionStore.get(params.get("id") ?? "");
-      if (!parsed) return new Response("not found", { status: 404 });
-      return params.get("as") === "markdown" ? new Response(toHandoffMarkdown(parsed), { headers: { "content-type": "text/markdown; charset=utf-8" } }) : Response.json(parsed);
-    },
-    "/api/smart-history": () => Response.json(smartHistory()),
     "/api/ai-usage": {
       POST: async (request: Request) => {
         if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
+        const ntfy = process.env.KEEP_NTFY_URL;
+        const notify = async (message: string) => {
+          if (ntfy) await fetch(ntfy, { method: "POST", body: message, signal: AbortSignal.timeout(5000) }).catch(() => {});
+          // host/keep-bot.py posts outbox files to Telegram
+          const file = `${config.dataDir}/outbox/${Date.now()}-ai-usage.json`;
+          await Bun.write(`${file}.tmp`, JSON.stringify({ topic: "alerts", text: `🤖 ${message}`, why: false }))
+            .then(() => rename(`${file}.tmp`, file))
+            .catch(() => {});
+        };
         const entry = await recordAiUsage(config.dataDir, await request.json().catch(() => null), notify);
         if (!entry) return new Response("bad payload", { status: 400 });
         slow.jobs = await collectJobs(config.dataDir);
@@ -276,8 +280,8 @@ const server = Bun.serve({
       const from = Number(params.get("from"));
       const to = Number(params.get("to"));
       // A bar's worth of detail, not a dump of the database.
-      if (!key || !Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 2 * 3600)
-        return new Response("key, from, to (at most 2 h)", { status: 400 });
+      if (!key || !Number.isFinite(from) || !Number.isFinite(to) || to <= from || to - from > 8 * 3600)
+        return new Response("key, from, to (at most 8 h)", { status: 400 });
       return Response.json(historyDb.minutes(key, from, to));
     },
     "/api/activity": async () => {
@@ -294,7 +298,7 @@ const server = Bun.serve({
         dokploySessions,
         deploys,
         viewers: viewers.list(),
-        actions: slow.jobs.actions,
+        actions: [...slow.jobs.actions, ...bucketDeletes].sort((a, b) => b.at.localeCompare(a.at)),
         cleanupRuns: slow.apps.cleanupRuns,
         publicIp: slow.publicIp,
       };

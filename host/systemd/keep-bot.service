@@ -1,0 +1,13 @@
+[Unit]
+Description=Telegram bot for the keep (alerts, commands, ai)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+ExecStart=/usr/local/bin/keep-bot
+Restart=always
+RestartSec=10
+# Outside Docker on purpose: it must keep working when Docker, Traefik or Tailscale are broken.
+
+[Install]
+WantedBy=multi-user.target

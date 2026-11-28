@@ -1,9 +1,8 @@
 #!/usr/bin/env python3
-"""Daily SMART health check for the box's disks.
+"""Daily SMART check for the box's SSDs and backup HDD, with a year of daily wear and write history.
 
 Runs from keep-smart.service / keep-smart.timer. Writes a JSON summary that the
-dashboard reads to show disk wear and status, and appends one line per disk to a
-history file so the dashboard can graph how each disk ages and spot it getting worse.
+dashboard reads to show disk wear and status.
 """
 
 import json
@@ -14,7 +13,6 @@ import sys
 from datetime import datetime, timezone
 
 OUT = "/srv/keep-dashboard/smart.json"
-HISTORY = "/srv/keep-dashboard/smart-history.jsonl"
 
 
 def run(*args):
@@ -68,54 +66,75 @@ def health(path):
 
 
 def info(path):
-    out = run("smartctl", "-A", path)
+    # -n standby: a sleeping HDD is skipped, not spun up; its last values are kept from the previous run.
+    out = run("smartctl", "-n", "standby", "-A", path)
+    if not out.strip() or "STANDBY" in out:
+        return None
+    raw = {}
+    for line in out.splitlines():
+        parts = line.split()
+        if len(parts) >= 10 and parts[0].isdigit() and (number := re.match(r"\d+", parts[9])):
+            raw[int(parts[0])] = (int(parts[3]), int(number.group()))
     wear = labelled(out, "Percentage Used")
     if wear is None:
-        # SATA: the normalized value counts down from 100, so wear is what is gone.
+        # SATA: the normalized value counts down from 100, so wear is what is gone. Team SSDs only expose
+        # remaining life as raw attribute 231 (unnamed in smartctl's database).
         for name in ("Wear_Leveling_Count", "Media_Wearout_Indicator", "SSD_Life_Left", "Percent_Lifetime_Remain"):
             found = attribute(out, name)
             if found:
                 wear = 100 - found[0]
                 break
+        else:
+            if 231 in raw:
+                wear = 100 - raw[231][1]
     temperature = labelled(out, "Temperature:")
     for name in ("Temperature_Celsius", "Airflow_Temperature_Cel"):
         found = attribute(out, name)
         if temperature is None and found:
             temperature = found[1]
-
-    # What is going wrong: SATA reallocated and pending sectors, NVMe media errors. Zero is healthy, a rising count is not.
-    reallocated = attribute(out, "Reallocated_Sector_Ct")
-    reallocated = reallocated[1] if reallocated else labelled(out, "Media and Data Integrity Errors")
-    pending = attribute(out, "Current_Pending_Sector")
-    power_on = attribute(out, "Power_On_Hours")
-    power_on = power_on[1] if power_on else labelled(out, "Power On Hours")
+    written = labelled(out, "Data Units Written")
     return {
         "wearPercent": wear,
         "temperatureC": temperature,
-        "reallocated": reallocated,
-        "pending": pending[1] if pending else None,
-        "powerOnHours": power_on,
+        # 241 counts GB on these Team SSDs; NVMe data units are 512,000 bytes.
+        "writtenGB": raw[241][1] if 241 in raw else (round(written * 512_000 / 1e9) if written else None),
+        "powerOnHours": raw[9][1] if 9 in raw else labelled(out, "Power On Hours"),
+        "badSectors": sum(raw[key][1] for key in (5, 197, 198) if key in raw),
     }
 
 
 def main():
+    try:
+        previous = {disk["device"]: disk for disk in json.load(open(OUT)).get("disks", [])}
+    except (OSError, ValueError):
+        previous = {}
+    today = datetime.now(timezone.utc).strftime("%Y-%m-%d")
     disks = []
     for path in devices():
+        name = path.rsplit("/", 1)[-1]
+        rotational = open(f"/sys/block/{name}/queue/rotational").read().strip() == "1" if os.path.exists(f"/sys/block/{name}") else False
+        before = previous.get(path, {})
+        found = info(path)
+        current = found or {key: before.get(key) for key in ("wearPercent", "temperatureC", "writtenGB", "powerOnHours", "badSectors")}
+        # One point per day, kept a year: enough to see wear and write rate trends.
+        history = [point for point in before.get("history", []) if point["day"] != today]
+        history.append({"day": today, "writtenGB": current["writtenGB"], "wearPercent": current["wearPercent"]})
         disks.append({
             "device": path,
-            "health": health(path),
-            **info(path),
+            "kind": "hdd" if rotational else "ssd",
+            "health": health(path) if found else before.get("health", "unknown"),
+            "asleep": found is None,
+            **current,
+            "history": history[-365:],
         })
 
-    at = datetime.now(timezone.utc).isoformat(timespec="seconds")
     os.makedirs(os.path.dirname(OUT), exist_ok=True)
     with open(f"{OUT}.tmp", "w") as handle:
-        json.dump({"at": at, "disks": disks}, handle)
+        json.dump({
+            "at": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "disks": disks,
+        }, handle)
     os.replace(f"{OUT}.tmp", OUT)
-    # Append-only, one line per disk per run; nothing is ever rewritten, so a crash can at worst leave a torn last line.
-    with open(HISTORY, "a") as handle:
-        for disk in disks:
-            handle.write(json.dumps({"at": at, **disk}) + "\n")
     print(json.dumps(disks, indent=2))
 
 

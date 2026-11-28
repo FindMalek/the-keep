@@ -1,5 +1,5 @@
 [Unit]
-Description=Check disk SMART status, wear and errors
+Description=Check SSD SMART status and wear
 
 [Service]
 Type=oneshot

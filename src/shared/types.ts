@@ -33,6 +33,8 @@ export interface MountStats {
   device: string | null;
   total: number;
   used: number;
+  /** Backup mounts are shown apart and never counted as usable space. */
+  role?: "data" | "backup";
 }
 
 export interface DiskStats {
@@ -50,19 +52,29 @@ export interface DiskStats {
 
 export interface SmartDisk {
   device: string;
+  kind?: "ssd" | "hdd";
   health: "passed" | "failed" | "unknown";
+  /** Share of the rated endurance used up: 2 means 98% left. */
   wearPercent: number | null;
   temperatureC: number | null;
-  /** SATA reallocated sectors, NVMe media errors. Zero is healthy; a rising count is not. */
-  reallocated?: number | null;
-  /** SATA sectors waiting to be reallocated. */
-  pending?: number | null;
+  writtenGB?: number | null;
   powerOnHours?: number | null;
+  badSectors?: number | null;
+  /** A sleeping HDD isn't woken for this; its values are from the last time it was awake. */
+  asleep?: boolean;
+  /** One point per day, oldest first. */
+  history?: { day: string; writtenGB: number | null; wearPercent: number | null }[];
 }
 
-/** One line of `smart-history.jsonl`: one disk at one daily run of `keep-smart`. */
-export interface SmartHistoryRow extends SmartDisk {
-  at: string;
+/** Written by keep-disk-watch every 15 minutes from the systemd journal. */
+export interface JournalStats {
+  at: number | null;
+  diskBytes: number | null;
+  capBytes: number | null;
+  /** The last 24 hours, oldest first. */
+  hours: { at: number; lines: number; errors: number; warnings: number }[];
+  /** Who wrote the most in the last hour. */
+  top: { source: string; lines: number }[];
 }
 
 export interface SmartStats {
@@ -197,6 +209,14 @@ export interface ActionRecord {
   at: string;
   status: "done" | "failed" | "refused";
   detail: string;
+  /** Requester's IP, written by the server into the request file. Older records don't have the fields below. */
+  requestedBy?: string | null;
+  startedAt?: string | null;
+  durationSec?: number | null;
+  exitCode?: number | null;
+  /** Last lines the action printed, at most 4 KB. */
+  output?: string | null;
+  freedBytes?: number | null;
 }
 
 export interface TidySummary {
@@ -272,6 +292,8 @@ export interface Links {
   kuma: string | null;
   navidrome: string | null;
   miniflux: string | null;
+  speedtest?: string | null;
+  dozzle?: string | null;
 }
 
 export interface Snapshot {
@@ -285,6 +307,7 @@ export interface Snapshot {
   network: NetStats[];
   sensors: SensorReading[];
   smart: SmartStats;
+  journal: JournalStats;
   containers: ContainerStats[];
   garage: GarageStats;
   services: ServiceCheck[];
@@ -434,6 +457,8 @@ export interface UsageItem {
   limit: number | null;
   /** Enforced by the app itself (bucket quota, Seafile quota); otherwise the limit only triggers alerts. */
   hard: boolean;
+  /** The app's own page, written by `keep-usage`; the client falls back to a matching Dokploy domain. */
+  url?: string;
 }
 
 export interface UsageStats {
@@ -448,7 +473,9 @@ export interface MusicStats {
   albums: number;
   artists: number;
   nowPlaying: { user: string; title: string; artist: string; album: string; minutesAgo: number; player: string }[];
-  recentlyAdded: { album: string; artist: string; year: number | null }[];
+  recentlyAdded: { id?: string; album: string; artist: string; year: number | null }[];
+  /** Most played albums, when Navidrome reports play counts. */
+  frequent?: { id: string; album: string; artist: string; plays: number }[];
   lastImport: { at: string; imported: number; waiting: number; leftInInbox: number } | null;
 }
 
@@ -489,4 +516,153 @@ export interface HomeStats {
   dns: DnsStats;
   internet: InternetStats;
   reading: ReadingStats;
+}
+
+/** One journald entry. `at` is microseconds since the epoch, as journald stores it. */
+export interface LogEntry {
+  cursor: string;
+  at: number;
+  priority: number;
+  source: string;
+  unit: string | null;
+  pid: number | null;
+  message: string;
+  fields?: Record<string, string>;
+}
+
+export interface LogPage {
+  /** Newest first. */
+  entries: LogEntry[];
+  /** Cursor to pass as `before` for older entries; null at the start of the journal. */
+  before: string | null;
+  /** Cursor to pass as `after` to poll for newer entries. */
+  after: string | null;
+}
+
+export interface LogHistogram {
+  /** Unix ms of the first bucket. */
+  from: number;
+  stepMs: number;
+  buckets: { lines: number; errors: number }[];
+  /** True when journalctl was cut off before reading the whole range. */
+  partial: boolean;
+}
+
+export interface JobRun {
+  invocation: string;
+  /** Unix ms. */
+  start: number;
+  end: number | null;
+  result: "success" | "failed" | "running" | "unknown";
+  /** Oldest first. */
+  lines: LogEntry[];
+}
+
+export interface BucketObject {
+  key: string;
+  size: number;
+  /** Unix ms. */
+  modified: number;
+  etag: string | null;
+}
+
+export interface BucketListing {
+  prefixes: string[];
+  objects: BucketObject[];
+  /** Pass as `after` for the next page; null when this is the last. */
+  next: string | null;
+  /** Whether the dashboard may delete in this bucket, and if not, why. Set by the API on every page. */
+  deletable?: boolean;
+  locked?: string | null;
+}
+
+/** Everything under a prefix, counted recursively. */
+export interface PrefixTotal {
+  objects: number;
+  bytes: number;
+  /** Counting stopped at the cap; the numbers are a floor. */
+  capped: boolean;
+}
+
+export interface BucketDeleteResult {
+  deleted: number;
+  bytes: number;
+  failed: string[];
+}
+
+export interface PriceTier {
+  above: number;
+  input: number;
+  output: number;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+}
+
+export interface ModelPrice {
+  provider: string;
+  model: string;
+  /** USD per million tokens. */
+  input: number;
+  output: number;
+  cacheRead: number | null;
+  cacheWrite: number | null;
+  reasoning: number | null;
+  /** Higher rates once the prompt passes `above` tokens (long-context pricing), lowest threshold first. */
+  tiers: PriceTier[];
+  source: "models.dev" | "manual";
+  validFrom: number;
+}
+
+export interface SessionListRow {
+  id: string;
+  tool: string;
+  machine: string;
+  directory: string | null;
+  branch: string | null;
+  title: string | null;
+  startedAt: number;
+  endedAt: number;
+  messageCount: number;
+  tokensIn: number;
+  tokensOut: number;
+  cacheRead: number;
+  cacheWrite: number;
+  /** Computed from stored prices; null when no message had a known price. */
+  costUsd: number | null;
+  /** What the tool itself reported, for comparison. */
+  reportedUsd: number | null;
+  unpriced: number;
+  models: string[];
+  /** Subagent runs grouped under this conversation; their tokens and cost are included above. */
+  subagents: number;
+  /** A subagent run whose conversation isn't stored, listed on its own. */
+  agentRun: boolean;
+}
+
+export interface UsageDay {
+  day: string;
+  tool: string;
+  model: string;
+  tokensIn: number;
+  tokensOut: number;
+  cacheRead: number;
+  cacheWrite: number;
+  costUsd: number;
+  /** Messages whose model has no price. */
+  unpriced: number;
+  sessions: number;
+}
+
+export interface SessionsPayload {
+  sessions: SessionListRow[];
+  total: number;
+  usage: UsageDay[];
+  pricesUpdatedAt: number | null;
+}
+
+export interface SessionFacets {
+  tools: string[];
+  machines: string[];
+  projects: string[];
+  models: string[];
 }
