@@ -27,6 +27,7 @@ import { ViewerLog } from "./lib/viewers";
 import { readText } from "./lib/host";
 import { gated } from "./lib/gate";
 import type {
+  ActionRecord,
   ActivityPayload,
   DeployEvent,
   DokploySession,
@@ -208,6 +209,12 @@ every(24 * 3600 * SECOND, async () => {
 });
 const journal = createJournal({ command: config.journalctl, directory: config.journalDir });
 const garageS3 = config.garageS3 ? createGarageS3(config.garageS3) : null;
+const bucketDeletesPath = `${config.dataDir}/bucket-deletes.json`;
+let bucketDeletes: ActionRecord[] = JSON.parse((await readText(bucketDeletesPath)) ?? "[]") as ActionRecord[];
+function logBucketDelete(record: ActionRecord): void {
+  bucketDeletes = [record, ...bucketDeletes].slice(0, 200);
+  void Bun.write(bucketDeletesPath, JSON.stringify(bucketDeletes));
+}
 
 const server = Bun.serve({
   port: config.port,
@@ -220,6 +227,8 @@ const server = Bun.serve({
       jobNames: () => slow.jobs.jobs.map((job) => job.name),
       buckets: () => garageS3,
       bucketNames: () => slow.garage.buckets.map((bucket) => bucket.name),
+      deleteBuckets: () => config.garageDeleteBuckets,
+      logBucketDelete,
     }),
     "/api/actions": {
       POST: async (request: Request) => {
@@ -278,7 +287,7 @@ const server = Bun.serve({
         dokploySessions,
         deploys,
         viewers: viewers.list(),
-        actions: slow.jobs.actions,
+        actions: [...slow.jobs.actions, ...bucketDeletes].sort((a, b) => b.at.localeCompare(a.at)),
         cleanupRuns: slow.apps.cleanupRuns,
         publicIp: slow.publicIp,
       };

@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState, type RefObject } from "react";
-import { DOT, onPixels, SOLID } from "../lib/dither";
+import { DOT, inkAlpha, onPixels, SOLID } from "../lib/dither";
 
 const TONES = { ink: "var(--ink)", warn: "var(--warn)", crit: "var(--crit)", muted: "var(--muted)" } as const;
 export type Tone = keyof typeof TONES;
@@ -31,7 +31,7 @@ export function DitherDefs() {
           Array.from({ length: SOLID - 1 }, (_, index) => index + 1).map((lvl) => (
             <pattern key={`${tone}-${lvl}`} id={`d-${tone}-${lvl}`} width={size} height={size} patternUnits="userSpaceOnUse">
               {onPixels(lvl).map(([x, y]) => (
-                <rect key={`${x}-${y}`} x={x * DOT} y={y * DOT} width={DOT} height={DOT} style={{ fill: TONES[tone] }} />
+                <rect key={`${x}-${y}`} x={x * DOT} y={y * DOT} width={DOT} height={DOT} style={{ fill: TONES[tone], fillOpacity: inkAlpha(lvl) }} />
               ))}
             </pattern>
           )),

@@ -1,5 +1,5 @@
 import { useState, type KeyboardEvent, type PointerEvent } from "react";
-import { AREA, DOT, FILL, peaks, SECONDARY, snapDown, SOLID, TRACK } from "../lib/dither";
+import { AREA, DOT, FILL, peaks, snapDown, SOLID, TRACK } from "../lib/dither";
 import { dither, useWidth, type Tone } from "./dither";
 import { niceTop } from "./sparkline";
 
@@ -82,7 +82,8 @@ export function DitherBars({ values, overlay, overlayTone = "crit", max, height 
     } else if (event.key === "Enter" && active !== null) onPick?.(pick(active));
   }
 
-  const overlayFill = overlayTone === "crit" ? dither(FILL, "crit") : dither(SECONDARY, "ink");
+  // Level-5 pixels are a subset of the bar's level-8 pixels, so a lighter overlay would vanish; the share is drawn denser instead.
+  const overlayFill = overlayTone === "crit" ? dither(FILL, "crit") : dither(FILL, "ink");
   const tipLeft = active === null ? 0 : Math.min(Math.max(0, xOf(active) - 40), Math.max(0, width - 160));
 
   return (

@@ -3,7 +3,7 @@ import { JournalError, parseLogQuery, type Journal } from "./collectors/logs";
 import { toHandoffMarkdown } from "./sessions/export";
 import type { SessionFilter, SessionStore } from "./sessions/store";
 import { isParsedSession } from "./sessions/validate";
-import type { ModelPrice, SessionsPayload } from "./shared/types";
+import type { ActionRecord, ModelPrice, SessionsPayload } from "./shared/types";
 
 /** Client-side routes; each serves the app shell. */
 export const PAGE_PATHS = ["/", "/apps", "/system", "/jobs", "/logs", "/activity", "/sessions", "/media", "/overview", "/uptime", "/buckets"];
@@ -14,6 +14,10 @@ export interface ApiDeps {
   jobNames: () => string[];
   buckets: () => BucketSource | null;
   bucketNames: () => string[];
+  /** Buckets deletes are allowed in (GARAGE_S3_DELETE_BUCKETS). */
+  deleteBuckets?: () => string[];
+  /** Records a bucket delete in the activity log. */
+  logBucketDelete?: (record: ActionRecord) => void;
 }
 
 const DAY = 86_400_000;
@@ -47,7 +51,7 @@ async function journalCall<T>(journal: Journal | null, work: (journal: Journal) 
 }
 
 /** Routes for sessions, prices, logs, job runs and buckets; the server and the fixture dev script both mount them. */
-export function apiRoutes({ sessions, journal, jobNames, buckets, bucketNames }: ApiDeps) {
+export function apiRoutes({ sessions, journal, jobNames, buckets, bucketNames, deleteBuckets, logBucketDelete }: ApiDeps) {
   return {
     "/api/sessions": {
       GET: (request: Request) => {
@@ -56,8 +60,8 @@ export function apiRoutes({ sessions, journal, jobNames, buckets, bucketNames }:
         const payload: SessionsPayload = {
           sessions: sessions.list(filter),
           total: sessions.count(filter),
-          // The overview only needs usage once; later pages of the list skip it.
-          usage: filter.offset ? [] : sessions.usageByDay(Date.now() - 90 * DAY, num(params.get("tz")) ?? 0),
+          // The overview only needs usage once; later pages of the list skip it. All of it, for the all-time range.
+          usage: filter.offset ? [] : sessions.usageByDay(0, num(params.get("tz")) ?? 0),
           pricesUpdatedAt: sessions.prices.updatedAt,
         };
         return Response.json(payload);
@@ -74,11 +78,17 @@ export function apiRoutes({ sessions, journal, jobNames, buckets, bucketNames }:
     "/api/sessions/facets": () => Response.json(sessions.facets()),
     "/api/session": (request: Request) => {
       const params = new URL(request.url).searchParams;
-      const parsed = sessions.get(params.get("id") ?? "");
-      if (!parsed) return new Response("not found", { status: 404 });
-      if (params.get("as") === "markdown") return new Response(toHandoffMarkdown(parsed), { headers: { "content-type": "text/markdown; charset=utf-8" } });
-      const costs = parsed.messages.map((message) => (message.role === "assistant" ? sessions.prices.cost(message, parsed.session.tool) : null));
-      return Response.json({ ...parsed, costs });
+      const id = params.get("id") ?? "";
+      // The page asks for pages; `keep-sessions pull` and the handoff take the whole conversation with its subagent runs.
+      if (params.has("offset") || params.has("limit")) {
+        const page = sessions.page(id, Math.max(0, num(params.get("offset")) ?? 0), Math.min(200, Math.max(1, num(params.get("limit")) ?? 40)));
+        return page ? Response.json(page) : new Response("not found", { status: 404 });
+      }
+      const conversation = sessions.conversation(id);
+      if (!conversation) return new Response("not found", { status: 404 });
+      if (params.get("as") === "markdown") return new Response(toHandoffMarkdown(conversation), { headers: { "content-type": "text/markdown; charset=utf-8" } });
+      const costs = conversation.messages.map((message) => (message.role === "assistant" ? sessions.prices.cost(message, conversation.session.tool) : null));
+      return Response.json({ ...conversation, costs });
     },
     "/api/prices": () => {
       const models = sessions.facets().models;
@@ -120,7 +130,8 @@ export function apiRoutes({ sessions, journal, jobNames, buckets, bucketNames }:
     "/api/buckets/:name/:op": (request: Request) => {
       const source = buckets();
       if (!source) return new Response("bucket browsing needs GARAGE_S3_KEY and GARAGE_S3_SECRET", { status: 503 });
-      return bucketResponse(source, bucketNames(), request);
+      const requester = request.headers.get("x-real-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? null;
+      return bucketResponse(source, bucketNames(), request, { allowed: deleteBuckets?.() ?? [], log: logBucketDelete, requester });
     },
   };
 }

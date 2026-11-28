@@ -24,6 +24,9 @@ services:
       GARAGE_S3_URL: "http://garage:3900"
       GARAGE_S3_KEY: ${GARAGE_S3_KEY:-}
       GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-}
+      GARAGE_S3_RW_KEY: ${GARAGE_S3_RW_KEY:-}
+      GARAGE_S3_RW_SECRET: ${GARAGE_S3_RW_SECRET:-}
+      GARAGE_S3_DELETE_BUCKETS: ${GARAGE_S3_DELETE_BUCKETS:-}
       # Docker only through the proxy below (a :ro socket mount still allows the whole Docker API).
       DOCKER_HOST: "tcp://docker-proxy:2375"
       # Your reverse proxy's VPN-only route must add `X-Keep-Gate: <this>`; without it the API answers 403, so other

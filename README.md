@@ -140,6 +140,8 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
 | `JOURNAL_DIR` | `/host/journal` | the host's `/var/log/journal`, mounted read-only, for the logs page and job run logs; empty reads the local journal |
 | `JOURNALCTL` | `journalctl` | command used to read it |
 | `GARAGE_S3_URL`, `GARAGE_S3_KEY`, `GARAGE_S3_SECRET` | — | a read-only Garage key for the bucket browser; unset hides browsing |
+| `GARAGE_S3_RW_KEY`, `GARAGE_S3_RW_SECRET` | — | a second Garage key with write grants on the cleanable buckets only; used for deletes, never for listing |
+| `GARAGE_S3_DELETE_BUCKETS` | — | comma-separated buckets the browser may delete in (`ente*`, `skiffr*` and `*backup*` are always refused); empty turns deletes off |
 | `SPEEDTEST_DB` | `/host/speedtest/database.sqlite` | Speedtest Tracker's database, mounted read-only |
 | `KEEP_GATE` | — | the secret your VPN route sends as `X-Keep-Gate`; unset, the API is open to whatever reaches the port |
 | `DOCKER_HOST` | — | `tcp://docker-proxy:2375`; without it, `DOCKER_SOCKET` (`/var/run/docker.sock`) |

@@ -249,6 +249,7 @@ function Timeline({ data, phone }: { data: ActivityPayload; phone: boolean }) {
         picked={hour}
         onPick={(r, c) => setHour(hour && hour[0] === r && hour[1] === c ? null : [r, c])}
         label="events per hour, last 7 days"
+        format={(value) => String(Math.round(value))}
       />
       </div>
       <FilterBar

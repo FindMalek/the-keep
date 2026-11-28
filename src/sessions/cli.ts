@@ -7,7 +7,7 @@ import { parseClaudeSession } from "./claude-code";
 import { toClaudeJsonl, toHandoffMarkdown, toOpenCodeJson } from "./export";
 import { readOpenCode } from "./opencode";
 import { SessionStore } from "./store";
-import type { ParsedSession } from "./types";
+import type { Conversation } from "./types";
 
 const [cmd, ...args] = process.argv.slice(2);
 const flag = (name: string): string | undefined => {
@@ -32,11 +32,19 @@ function ingest(): void {
   let added = 0;
   const claudeRoot = flag("claude") ?? join(homedir(), ".claude/projects");
   for (const proj of safeDir(claudeRoot)) {
-    for (const f of safeDir(join(claudeRoot, proj)).filter((n) => n.endsWith(".jsonl"))) {
-      const path = join(claudeRoot, proj, f);
-      const known = store.endedAt(`claude-code:${machine}:${f.slice(0, -6)}`);
+    const projectDir = join(claudeRoot, proj);
+    const entries = safeDir(projectDir);
+    const files = entries.filter((n) => n.endsWith(".jsonl")).map((n) => ({ path: join(projectDir, n), id: n.slice(0, -6), sidechain: false }));
+    // Subagent runs live next to their conversation: <session>/subagents/agent-<id>.jsonl
+    for (const dir of entries.filter((n) => !n.endsWith(".jsonl"))) {
+      for (const n of safeDir(join(projectDir, dir, "subagents")).filter((n) => n.startsWith("agent-") && n.endsWith(".jsonl"))) {
+        files.push({ path: join(projectDir, dir, "subagents", n), id: `agent:${n.slice(6, -6)}`, sidechain: true });
+      }
+    }
+    for (const { path, id, sidechain } of files) {
+      const known = store.endedAt(`claude-code:${machine}:${id}`);
       if (known !== null && known >= statSync(path).mtimeMs - 1000) continue;
-      const parsed = parseClaudeSession(readFileSync(path, "utf8"), machine);
+      const parsed = parseClaudeSession(readFileSync(path, "utf8"), machine, sidechain);
       if (!parsed || skipped(parsed.session.directory)) continue;
       store.upsert(parsed);
       added++;
@@ -68,7 +76,7 @@ function opencodeProjectId(dbPath: string, directory: string | null): string | n
   }
 }
 
-function exportTo(p: ParsedSession, target: string | undefined): void {
+function exportTo(p: Conversation, target: string | undefined): void {
   if (target === "claude") {
     const cwd = flag("cwd") ?? p.session.directory ?? process.cwd();
     const { id: newId, jsonl } = toClaudeJsonl(p, { cwd });
@@ -139,11 +147,11 @@ async function pull(id: string | undefined, target: string | undefined): Promise
     console.error(`pull: ${res.status}`);
     process.exit(1);
   }
-  exportTo((await res.json()) as ParsedSession, target);
+  exportTo((await res.json()) as Conversation, target);
 }
 
 function need(id: string | undefined) {
-  const p = id ? store.get(id) : null;
+  const p = id ? store.conversation(id) : null;
   if (!p) {
     console.error("session not found; run `list` for ids");
     process.exit(1);
