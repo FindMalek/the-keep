@@ -1,4 +1,5 @@
 import type { Server } from "bun";
+import { rename } from "node:fs/promises";
 import index from "./web/index.html";
 import { loadConfig } from "./lib/config";
 import { HistoryStore } from "./lib/history";
@@ -249,6 +250,11 @@ const server = Bun.serve({
         const ntfy = process.env.KEEP_NTFY_URL;
         const notify = async (message: string) => {
           if (ntfy) await fetch(ntfy, { method: "POST", body: message, signal: AbortSignal.timeout(5000) }).catch(() => {});
+          // host/keep-bot.py posts outbox files to Telegram
+          const file = `${config.dataDir}/outbox/${Date.now()}-ai-usage.json`;
+          await Bun.write(`${file}.tmp`, JSON.stringify({ topic: "alerts", text: `🤖 ${message}`, why: false }))
+            .then(() => rename(`${file}.tmp`, file))
+            .catch(() => {});
         };
         const entry = await recordAiUsage(config.dataDir, await request.json().catch(() => null), notify);
         if (!entry) return new Response("bad payload", { status: 400 });

@@ -17,6 +17,7 @@ from datetime import datetime, timezone
 REBOOT_REQUIRED = "/var/run/reboot-required"
 STATE = "/srv/keep-dashboard/upgrade-state.json"
 NTFY_TOPIC_FILE = "/srv/uptime-kuma/admin.env"
+OUTBOX = "/srv/keep-dashboard/outbox"
 
 
 def notify(title, message, priority=3):
@@ -31,6 +32,18 @@ def notify(title, message, priority=3):
         urllib.request.urlopen(request, timeout=10)
     except Exception as error:
         print(f"ntfy failed: {error}", file=sys.stderr)
+
+
+def telegram(text, key=None, topic="alerts", resolved=False):
+    """Hand a message to keep-bot (host/keep-bot.py), which posts it to the Telegram group; same key edits it."""
+    try:
+        os.makedirs(OUTBOX, exist_ok=True)
+        path = f"{OUTBOX}/{time.time_ns()}.json"
+        with open(f"{path}.tmp", "w") as handle:
+            json.dump({"topic": topic, "text": text, "key": key, "resolved": resolved}, handle)
+        os.replace(f"{path}.tmp", path)
+    except OSError as error:
+        print(f"telegram outbox failed: {error}", file=sys.stderr)
 
 
 def load_state():
@@ -62,6 +75,8 @@ def main():
         return
 
     notify("the-keep: rebooting for updates", "a new kernel or critical update requires a reboot; starting now", priority=4)
+    telegram("🔁 rebooting for updates: a new kernel or critical update needs it", topic="updates")
+    time.sleep(3)  # let keep-bot post it before the network goes down
     save_state({"rebooted": today, "at": datetime.now(timezone.utc).isoformat(timespec="seconds")})
     subprocess.run(["systemctl", "reboot"])
 

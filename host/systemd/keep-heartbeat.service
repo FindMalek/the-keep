@@ -1,0 +1,7 @@
+[Unit]
+Description=Ping healthchecks.io (box alive)
+After=network-online.target
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/keep-heartbeat

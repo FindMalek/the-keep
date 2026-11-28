@@ -12,9 +12,11 @@ where this box itself is down.
 """
 
 import json
+import os
 import re
 import subprocess
 import sys
+import time
 import urllib.request
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timezone
@@ -23,6 +25,7 @@ DATA = "/srv/keep-dashboard"
 HOME = "home.findmalek.engineer"
 DOMAIN = "findmalek.engineer"
 NTFY_ENV = "/srv/uptime-kuma/admin.env"
+OUTBOX = f"{DATA}/outbox"
 FAILS_TO_ALERT = 2
 
 
@@ -94,6 +97,18 @@ def notify(text):
         print(f"ntfy failed: {error}", file=sys.stderr)
 
 
+def telegram(text, key=None, topic="alerts", resolved=False):
+    """Hand a message to keep-bot (host/keep-bot.py), which posts it to the Telegram group; same key edits it."""
+    try:
+        os.makedirs(OUTBOX, exist_ok=True)
+        path = f"{OUTBOX}/{time.time_ns()}.json"
+        with open(f"{path}.tmp", "w") as handle:
+            json.dump({"topic": topic, "text": text, "key": key, "resolved": resolved}, handle)
+        os.replace(f"{path}.tmp", path)
+    except OSError as error:
+        print(f"telegram outbox failed: {error}", file=sys.stderr)
+
+
 def main():
     try:
         previous = json.load(open(f"{DATA}/reachability.json"))
@@ -120,6 +135,11 @@ def main():
                 log.write(json.dumps({"at": now(), "event": change}) + "\n")
         if previous:
             notify("\n".join(changes))
+            for host in down:
+                if host not in was_down:
+                    telegram(f"🔴 {host} is unreachable from outside\n{checks[host]['error']}", f"site:{host}")
+            for host in sorted(was_down - set(down)):
+                telegram(f"🟢 {host} is reachable again", f"site:{host}", resolved=True)
     for change in changes:
         print(change)
 

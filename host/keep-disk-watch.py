@@ -40,6 +40,7 @@ JOURNAL_OUT = "/srv/keep-dashboard/journal.json"
 # BuildKit counts less than `docker system df` shows (~8 GB less here); 65gb keeps the reported total under 75 GB.
 BUILD_CACHE_CAP = "65gb"
 NTFY_TOPIC_FILE = "/srv/uptime-kuma/admin.env"
+OUTBOX = "/srv/keep-dashboard/outbox"
 
 
 def notify(message, priority):
@@ -56,6 +57,18 @@ def notify(message, priority):
     except Exception as error:
         print(f"ntfy failed: {error}", file=sys.stderr)
         return False
+
+
+def telegram(text, key=None, topic="alerts", resolved=False):
+    """Hand a message to keep-bot (host/keep-bot.py), which posts it to the Telegram group; same key edits it."""
+    try:
+        os.makedirs(OUTBOX, exist_ok=True)
+        path = f"{OUTBOX}/{time.time_ns()}.json"
+        with open(f"{path}.tmp", "w") as handle:
+            json.dump({"topic": topic, "text": text, "key": key, "resolved": resolved}, handle)
+        os.replace(f"{path}.tmp", path)
+    except OSError as error:
+        print(f"telegram outbox failed: {error}", file=sys.stderr)
 
 
 def run(*args):
@@ -221,8 +234,12 @@ def main():
     sent = state.get("sent", {})
     for key, (message, priority) in found.items():
         print(message)
-        if now - sent.get(key, 0) >= REPEAT_SEC and notify(message, priority):
-            sent[key] = now
+        if now - sent.get(key, 0) >= REPEAT_SEC:
+            telegram(f"🔴 {message}", f"disk:{key}")
+            if notify(message, priority):
+                sent[key] = now
+    for key in set(sent) - set(found):
+        telegram(f"🟢 resolved: {key}", f"disk:{key}", resolved=True)
     state["sent"] = {key: at for key, at in sent.items() if key in found}
     if ("/" in found or "/srv" in found) and now - state.get("tidied", 0) >= TIDY_EVERY_SEC:
         subprocess.run(["systemctl", "start", "--no-block", "keep-tidy.service"])
