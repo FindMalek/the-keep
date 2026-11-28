@@ -5,7 +5,7 @@ services:
     build: .
     restart: unless-stopped
     environment:
-      MOUNTS: "system=/:/host/fs/system,data=/srv:/data"
+      MOUNTS: "system=/:/host/fs/system,data=/srv:/data,backup=/srv/backup-hdd:/host/fs/backup"
       NET_IFACES: "eth0=lan,tailscale0=tailscale"
       SERVICES: "photos=https://photos.example.com,drive=https://drive.example.com"
       DDNS_HOST: "home.example.com"
@@ -16,8 +16,17 @@ services:
       KUMA_PUBLIC_URL: "https://kuma.example.com"
       NAVIDROME_PUBLIC_URL: "https://music.example.com"
       MINIFLUX_PUBLIC_URL: "https://rss.example.com"
-      # N8N_URL: "http://n8n:5678" # N8N_API_KEY belongs in /data/integrations.env
-      # BACKREST_URL: "http://backrest:9898" # BACKREST_USER and BACKREST_PASSWORD belong in /data/integrations.env
+      SPEEDTEST_PUBLIC_URL: "https://speed.example.com"
+      DOZZLE_PUBLIC_URL: "https://logs.example.com"
+      # Mount labels (from MOUNTS) that hold backups: shown apart and left out of the usable total.
+      BACKUP_MOUNTS: "backup"
+      # Bucket browser: a Garage key with read grants only (see README). Leave unset to hide browsing.
+      GARAGE_S3_URL: "http://garage:3900"
+      GARAGE_S3_KEY: ${GARAGE_S3_KEY:-}
+      GARAGE_S3_SECRET: ${GARAGE_S3_SECRET:-}
+      GARAGE_S3_RW_KEY: ${GARAGE_S3_RW_KEY:-}
+      GARAGE_S3_RW_SECRET: ${GARAGE_S3_RW_SECRET:-}
+      GARAGE_S3_DELETE_BUCKETS: ${GARAGE_S3_DELETE_BUCKETS:-}
       # Docker only through the proxy below (a :ro socket mount still allows the whole Docker API).
       DOCKER_HOST: "tcp://docker-proxy:2375"
       # Your reverse proxy's VPN-only route must add `X-Keep-Gate: <this>`; without it the API answers 403, so other
@@ -30,11 +39,16 @@ services:
       - /etc/os-release:/host/etc/os-release:ro
       - /var/lib/keep-dashboard:/host/fs/system:ro
       - /srv/keep-dashboard:/data
+      # rslave: the HDD shows up here even when it is mounted after the container starts.
+      - /srv/backup-hdd:/host/fs/backup:ro,rslave
       # Optional integrations:
       - /srv/garage/garage.toml:/host/garage.toml:ro
       - /etc/dokploy-api.env:/host/dokploy-api.env:ro
       - /srv/uptime-kuma/metrics.key:/host/kuma-metrics.key:ro
       - /srv/tools/speedtest:/host/speedtest:ro
+      # Logs page and job run logs: the host journal, read with the image's own journalctl.
+      - /var/log/journal:/host/journal:ro
+      - /etc/machine-id:/etc/machine-id:ro
     depends_on:
       - docker-proxy
     networks:

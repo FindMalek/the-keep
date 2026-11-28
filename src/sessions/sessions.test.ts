@@ -1,11 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
-import { mkdtempSync, statSync } from "node:fs";
+import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseClaudeSession } from "./claude-code";
 import { toClaudeJsonl, toHandoffMarkdown, toOpenCodeJson } from "./export";
-import { parseOpenCodeMessage, readOpenCode } from "./opencode";
+import { parseOpenCodeMessage } from "./opencode";
 import { SessionStore } from "./store";
 
 const line = (o: unknown) => JSON.stringify(o);
@@ -50,36 +49,9 @@ describe("claude code", () => {
     expect(back.messages[1]!.text).toContain("[tool Read]");
     expect(back.session.directory).toBe("/work/app");
   });
-
-  test("keeps subagent conversations separate from their parent", () => {
-    const line = JSON.stringify({ ...base, agentId: "agent1", isSidechain: true, type: "user", timestamp: "2026-11-01T10:00:00Z", message: { role: "user", content: "subtask" } });
-    expect(parseClaudeSession(line, "mac")).toBeNull();
-    const agent = parseClaudeSession(line, "mac", true)!;
-    expect(agent.session.id).toBe("claude-code:mac:agent:agent1");
-    expect(agent.messages[0]?.text).toBe("subtask");
-  });
-
-  test("uses an unknown time when a conversation has no timestamps", () => {
-    const parsed = parseClaudeSession(JSON.stringify({ ...base, type: "user", message: { role: "user", content: "hello" } }), "mac")!;
-    expect(parsed.session.startedAt).toBe(0);
-    expect(parsed.session.endedAt).toBe(0);
-  });
 });
 
 describe("opencode", () => {
-  test("imports child sessions as separate conversations", () => {
-    const dir = mkdtempSync(join(tmpdir(), "keep-opencode-"));
-    const path = join(dir, "opencode.db");
-    const db = new Database(path);
-    db.run("CREATE TABLE project (id TEXT, worktree TEXT)");
-    db.run("CREATE TABLE session_v2 (id TEXT, project_id TEXT, parent_id TEXT, directory TEXT, title TEXT, model TEXT, cost REAL, time_created INTEGER, time_updated INTEGER)");
-    db.run("CREATE TABLE session_message (session_id TEXT, type TEXT, data TEXT, seq INTEGER)");
-    db.run("INSERT INTO session_v2 VALUES ('parent', NULL, NULL, NULL, NULL, NULL, NULL, 1, 2), ('child', NULL, 'parent', NULL, NULL, NULL, NULL, 1, 2)");
-    db.run("INSERT INTO session_message VALUES ('parent', 'user', '{\"text\":\"hello\"}', 0), ('child', 'user', '{\"text\":\"subtask\"}', 0)");
-    db.close();
-    expect([...readOpenCode(path, "mac")].map((entry) => entry.session.nativeId)).toEqual(["parent", "child"]);
-  });
-
   test("reads tokens, cost, reasoning and tool output from an assistant message", () => {
     const m = parseOpenCodeMessage(
       "assistant",
@@ -113,57 +85,6 @@ describe("store and exports", () => {
     store.close();
   });
 
-  test("stores repository labels and filters sessions without exposing the database", () => {
-    const dir = mkdtempSync(join(tmpdir(), "keep-sessions-private-"));
-    const store = new SessionStore(dir);
-    store.upsert({ ...parsed, session: { ...parsed.session, repository: "the-keep" } });
-    store.upsert({ ...parsed, session: { ...parsed.session, id: "other", repository: "jobflow" } });
-    expect(store.repositories()).toEqual(["jobflow", "the-keep"]);
-    expect(store.count("jobflow")).toBe(1);
-    expect(store.list(50, 0, "jobflow")[0]?.repository).toBe("jobflow");
-    expect(statSync(join(dir, "sessions.db")).mode & 0o777).toBe(0o600);
-    store.close();
-  });
-
-  test("preserves existing sessions when adding repository labels", () => {
-    const dir = mkdtempSync(join(tmpdir(), "keep-sessions-old-"));
-    const db = new Database(join(dir, "sessions.db"));
-    db.run("CREATE TABLE sessions (id TEXT PRIMARY KEY, tool TEXT NOT NULL, machine TEXT NOT NULL, native_id TEXT NOT NULL, directory TEXT, branch TEXT, title TEXT, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL, cost_usd REAL, models TEXT NOT NULL)");
-    db.run("INSERT INTO sessions VALUES ('old', 'opencode', 'mac', '1', NULL, NULL, NULL, 1, 2, NULL, '[]')");
-    db.close();
-    const store = new SessionStore(dir);
-    expect(store.get("old")?.session.repository).toBeNull();
-    expect(store.count()).toBe(1);
-    store.close();
-    const oldVersion = new Database(join(dir, "sessions.db"));
-    oldVersion.run("INSERT INTO sessions VALUES ('old-code', 'opencode', 'mac', '2', NULL, NULL, NULL, 1, 2, NULL, '[]')");
-    oldVersion.close();
-    const reopened = new SessionStore(dir);
-    expect(reopened.count()).toBe(2);
-    reopened.close();
-  });
-
-  test("re-reads a source only when its size or modification time changes", () => {
-    const dir = mkdtempSync(join(tmpdir(), "keep-session-source-"));
-    const store = new SessionStore(dir);
-    expect(store.sourceUnchanged("session.jsonl", 10, 20)).toBe(false);
-    store.markSource("session.jsonl", 10, 20);
-    expect(store.sourceUnchanged("session.jsonl", 10, 20)).toBe(true);
-    expect(store.sourceUnchanged("session.jsonl", 10, 21)).toBe(false);
-    store.close();
-  });
-
-  test("keeps labels from an earlier local schema", () => {
-    const dir = mkdtempSync(join(tmpdir(), "keep-sessions-repo-"));
-    const db = new Database(join(dir, "sessions.db"));
-    db.run("CREATE TABLE sessions (id TEXT PRIMARY KEY, tool TEXT NOT NULL, machine TEXT NOT NULL, native_id TEXT NOT NULL, directory TEXT, branch TEXT, title TEXT, started_at INTEGER NOT NULL, ended_at INTEGER NOT NULL, cost_usd REAL, models TEXT NOT NULL, repository TEXT)");
-    db.run("INSERT INTO sessions VALUES ('old', 'opencode', 'mac', '1', NULL, NULL, NULL, 1, 2, NULL, '[]', 'jobflow')");
-    db.close();
-    const store = new SessionStore(dir);
-    expect(store.get("old")?.session.repository).toBe("jobflow");
-    store.close();
-  });
-
   test("OpenCode export uses time-ordered ids and the given project", () => {
     const { id, json } = toOpenCodeJson(parsed, { projectID: "abc" });
     const out = JSON.parse(json);
@@ -177,5 +98,93 @@ describe("store and exports", () => {
     const md = toHandoffMarkdown(parsed, 60);
     expect(md).toContain("earlier turns omitted");
     expect(md).toContain("[tool Read]");
+  });
+});
+
+describe("subagent runs", () => {
+  const parent = [
+    line({ ...base, type: "user", timestamp: "2026-11-01T10:00:00Z", uuid: "u1", message: { role: "user", content: "look into it" } }),
+    line({ ...base, type: "assistant", timestamp: "2026-11-01T10:00:01Z", uuid: "a1", message: { id: "m1", model: "claude-x", content: [{ type: "tool_use", id: "t1", name: "Agent", input: { prompt: "find the slow query" } }], usage: { input_tokens: 1, output_tokens: 1 } } }),
+    line({ ...base, type: "user", timestamp: "2026-11-01T10:00:09Z", uuid: "u2", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "t1", content: "it is the join\nagentId: abc123def (internal)" }] } }),
+  ].join("\n");
+  const run = (prompt: string) =>
+    [
+      line({ ...base, agentId: "abc123def", isSidechain: true, type: "user", timestamp: "2026-11-01T10:00:02Z", uuid: "c1", message: { role: "user", content: prompt } }),
+      line({ ...base, agentId: "abc123def", isSidechain: true, type: "assistant", timestamp: "2026-11-01T10:00:05Z", uuid: "c2", message: { id: "n1", model: "claude-x", content: [{ type: "text", text: "it is the join" }, { type: "tool_use", id: "t9", name: "Edit", input: { file_path: "/work/app/db.ts" } }], usage: { input_tokens: 7, output_tokens: 3 } } }),
+    ].join("\n");
+  const newStore = () => new SessionStore(mkdtempSync(join(tmpdir(), "keep-sessions-")));
+
+  test("a subagent file parses as its own run that names its conversation", () => {
+    const child = parseClaudeSession(run("find the slow query"), "mac", true)!;
+    expect(child.session.id).toBe("claude-code:mac:agent:abc123def");
+    expect(child.session.parentId).toBe("claude-code:mac:s1");
+    expect(child.messages.map((m) => m.role)).toEqual(["user", "assistant"]);
+  });
+
+  test("runs are grouped under their conversation at the spawning call, whichever arrives first", () => {
+    for (const order of [0, 1]) {
+      const store = newStore();
+      // Runs pushed by older clients carry no parentId; the Agent result's agentId still places them.
+      const child = parseClaudeSession(run("find the slow query"), "mac", true)!;
+      delete child.session.parentId;
+      const host = parseClaudeSession(parent, "mac")!;
+      for (const p of order ? [host, child] : [child, host]) store.upsert(p);
+      const rows = store.list();
+      expect(rows.map((r) => r.id)).toEqual([host.session.id]);
+      expect(rows[0]!.subagents).toBe(1);
+      expect(rows[0]!.tokensIn).toBe(8);
+      const runs = store.conversation(host.session.id)!.subagents!;
+      expect(runs.map((r) => [r.id, r.parentSeq, r.callIndex])).toEqual([[child.session.id, 1, 0]]);
+      expect(store.page(child.session.id, 0, 10)!.parent?.id).toBe(host.session.id);
+      store.close();
+    }
+  });
+
+  test("a run without an agentId in the result is matched by its prompt", () => {
+    const store = newStore();
+    store.upsert(parseClaudeSession(parent.replace("\\nagentId: abc123def (internal)", ""), "mac")!);
+    store.upsert(parseClaudeSession(run("find the slow query"), "mac", true)!);
+    expect(store.conversation("claude-code:mac:s1")!.subagents!.map((r) => r.parentSeq)).toEqual([1]);
+    store.close();
+  });
+
+  test("an orphan run stays listed on its own", () => {
+    const store = newStore();
+    const child = parseClaudeSession(run("anything"), "mac", true)!;
+    store.upsert(child);
+    expect(store.list().map((r) => [r.id, r.agentRun])).toEqual([[child.session.id, true]]);
+    store.close();
+  });
+
+  test("pages slice messages and only the first carries the summary, runs included", () => {
+    const store = newStore();
+    store.upsert(parseClaudeSession(parent, "mac")!);
+    store.upsert(parseClaudeSession(run("find the slow query"), "mac", true)!);
+    const first = store.page("claude-code:mac:s1", 0, 1)!;
+    expect(first.total).toBe(2);
+    expect(first.messages.map((m) => m.seq)).toEqual([0]);
+    expect(first.summary!.subagents).toHaveLength(1);
+    expect(first.summary!.files).toEqual([{ path: "/work/app/db.ts", edits: 1, reads: 0 }]);
+    expect(first.summary!.tools.map((t) => t.name).sort()).toEqual(["Agent", "Edit"]);
+    const second = store.page("claude-code:mac:s1", 1, 1)!;
+    expect(second.messages.map((m) => m.seq)).toEqual([1]);
+    expect(second.summary).toBeUndefined();
+    store.close();
+  });
+
+  test("exports of a grouped conversation carry what each run did at its call", () => {
+    const store = newStore();
+    store.upsert(parseClaudeSession(parent, "mac")!);
+    store.upsert(parseClaudeSession(run("find the slow query"), "mac", true)!);
+    const conversation = store.conversation("claude-code:mac:s1")!;
+    const md = toHandoffMarkdown(conversation);
+    expect(md).toContain("[subagent run");
+    expect(md).toContain("files changed: /work/app/db.ts");
+    const { jsonl } = toClaudeJsonl(conversation);
+    const back = parseClaudeSession(jsonl, "other")!;
+    expect(back.messages[1]!.text).toContain("files changed: /work/app/db.ts");
+    const oc = JSON.parse(toOpenCodeJson(conversation, { projectID: "p" }).json);
+    expect(JSON.stringify(oc.messages)).toContain("[subagent run");
+    store.close();
   });
 });

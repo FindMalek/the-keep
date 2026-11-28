@@ -2,44 +2,82 @@ import { useEffect, useState } from "react";
 import type { BackrestStats } from "../../shared/types";
 import { bytes } from "../lib/format";
 import { since, until } from "../lib/time";
+import { Empty, Panel, Subhead } from "./panel";
+import { StatusSquare } from "./status-square";
 
-export function BackrestDetails() {
+function useBackrest(): BackrestStats | null {
   const [data, setData] = useState<BackrestStats | null>(null);
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         const response = await fetch("/api/backrest");
-        if (!response.ok) throw new Error("dashboard request failed");
-        if (!cancelled) setData(await response.json() as BackrestStats);
+        if (!response.ok) throw new Error(String(response.status));
+        if (!cancelled) setData((await response.json()) as BackrestStats);
       } catch {
         if (!cancelled) setData((previous) => previous ?? { status: "unreachable", plans: [], snapshotsAvailable: false, snapshots: [] });
       }
     };
     void load();
     const timer = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(timer); };
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, []);
-
-  if (!data) return <p className="empty">loading backup history</p>;
-  if (data.status === "not configured") return <p className="empty">Backrest is not connected. Snapshot history and backup health cannot be confirmed here.</p>;
-  if (data.status === "unreachable") return <p className="empty">Backrest is unreachable or rejected the configured credentials.</p>;
-  return <>
-    {data.source === "host" && <p className="muted small">local repository snapshots · backup execution status is not available from this source</p>}
-    {data.plans.length === 0 ? <p className="empty">no backup plans reported</p> : <PlanList plans={data.plans} />}
-    <h3 className="subhead">recent snapshots</h3>
-    {!data.snapshotsAvailable ? <p className="empty">snapshot history unavailable</p> : data.snapshots.length === 0 ? <p className="empty">no snapshots reported by this source</p> : <SnapshotList snapshots={data.snapshots} />}
-  </>;
+  return data;
 }
 
-function PlanList({ plans }: { plans: BackrestStats["plans"] }) {
-  return <table className="table"><thead><tr><th>plan</th><th className="right">snapshots</th><th className="right hide-narrow">protected</th><th>last 30 days</th><th className="right">next</th></tr></thead><tbody>
-    {plans.map((plan) => <tr key={plan.id}><td>{plan.id}</td><td className="right num">{plan.snapshots}</td><td className="right num hide-narrow">{plan.protectedBytes === null ? "—" : bytes(plan.protectedBytes)}</td><td>{plan.success === null ? "not reported" : <>{plan.success} ok · {plan.warning} warnings · <span className={plan.failed ? "level-crit" : undefined}>{plan.failed} failed</span></>}</td><td className="right muted">{plan.nextAt ? until(plan.nextAt) : "—"}</td></tr>)}
-  </tbody></table>;
-}
-
-function SnapshotList({ snapshots }: { snapshots: BackrestStats["snapshots"] }) {
-  return <table className="table"><thead><tr><th>snapshot</th><th>plan</th><th className="hide-narrow">repository</th><th className="right">reported</th></tr></thead><tbody>
-    {snapshots.map((item) => <tr key={`${item.repo}:${item.id}`}><td className="mono">{item.id.slice(0, 12)}</td><td>{item.plan || "—"}</td><td className="hide-narrow muted">{item.repo || "—"}</td><td className="right muted">{item.at ? since(item.at) : "—"}</td></tr>)}
-  </tbody></table>;
+/** Backrest plans and the newest snapshots of the local repository. */
+export function BackupsPanel() {
+  const data = useBackrest();
+  const newest = data?.snapshots.reduce<BackrestStats["snapshots"][number] | null>((best, item) => (!best || item.at > best.at ? item : best), null);
+  const stale = newest ? Date.now() - newest.at > 36 * 3600_000 : true;
+  const snapshots = [...(data?.snapshots ?? [])].sort((a, b) => b.at - a.at);
+  return (
+    <Panel id="backups" title="backups" span={4} meta={newest ? <span className={stale ? "level-warn" : ""}>last snapshot {since(newest.at)}</span> : (data?.status ?? "loading")}>
+      {!data ? (
+        <Empty>loading</Empty>
+      ) : data.status !== "connected" ? (
+        <Empty>{data.status === "not configured" ? "keep-backrest-status hasn't reported yet" : "backrest could not be read"}</Empty>
+      ) : (
+        <div className="stack">
+          {data.plans.length === 0 ? (
+            <Empty>no backup plans</Empty>
+          ) : (
+            <ul className="list">
+              {data.plans.map((plan) => (
+                <li key={plan.id} className="line">
+                  <span>
+                    <StatusSquare status={plan.failed ? "down" : plan.warning ? "warn" : "ok"} label={plan.failed ? `${plan.failed} failed` : "ok"} /> {plan.id}
+                  </span>
+                  <span className="facts-inline muted">
+                    <span className="n-count">{plan.snapshots} snaps</span>
+                    {plan.protectedBytes !== null && <span className="n-bytes">{bytes(plan.protectedBytes)}</span>}
+                    {plan.nextAt && <span>next {until(plan.nextAt)}</span>}
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+          <Subhead aside={data.snapshotsAvailable ? `${snapshots.length}` : "unavailable"}>snapshots</Subhead>
+          {snapshots.length === 0 ? (
+            <Empty>no snapshots yet</Empty>
+          ) : (
+            <ul className="list">
+              {snapshots.slice(0, 8).map((item) => (
+                <li key={`${item.repo}:${item.id}`} className="line">
+                  <span className="mono">{item.id.slice(0, 10)}</span>
+                  <span className="facts-inline muted">
+                    <span>{item.repo || item.plan}</span>
+                    <span className="n-ago">{since(item.at)}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
 }

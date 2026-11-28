@@ -40,12 +40,14 @@ async function music(env: Secrets, dataDir: string): Promise<MusicStats> {
     });
     const sub = async <T>(endpoint: string, extra = "") => (await json<{ "subsonic-response": T }>(`${NAVIDROME}/rest/${endpoint}?${subsonic}${extra}`)).body["subsonic-response"];
 
-    const [songs, albums, artists, playing, newest] = await Promise.all([
+    type AlbumList = { albumList2?: { album?: { id: string; name: string; artist: string; year?: number; playCount?: number }[] } };
+    const [songs, albums, artists, playing, newest, frequent] = await Promise.all([
       total("song"),
       total("album"),
       total("artist"),
       sub<{ nowPlaying?: { entry?: { username: string; title: string; artist: string; album: string; minutesAgo: number; playerName: string }[] } }>("getNowPlaying"),
-      sub<{ albumList2?: { album?: { name: string; artist: string; year?: number }[] } }>("getAlbumList2", "&type=newest&size=4"),
+      sub<AlbumList>("getAlbumList2", "&type=newest&size=12"),
+      sub<AlbumList>("getAlbumList2", "&type=frequent&size=12").catch((): AlbumList => ({})),
     ]);
     return {
       reachable: true,
@@ -55,7 +57,10 @@ async function music(env: Secrets, dataDir: string): Promise<MusicStats> {
       nowPlaying: (playing.nowPlaying?.entry ?? []).map((entry) => ({
         user: entry.username, title: entry.title, artist: entry.artist, album: entry.album, minutesAgo: entry.minutesAgo, player: entry.playerName,
       })),
-      recentlyAdded: (newest.albumList2?.album ?? []).map((album) => ({ album: album.name, artist: album.artist, year: album.year ?? null })),
+      recentlyAdded: (newest.albumList2?.album ?? []).map((album) => ({ id: album.id, album: album.name, artist: album.artist, year: album.year ?? null })),
+      frequent: (frequent.albumList2?.album ?? [])
+        .filter((album) => (album.playCount ?? 0) > 0)
+        .map((album) => ({ id: album.id, album: album.name, artist: album.artist, plays: album.playCount ?? 0 })),
       lastImport,
     };
   } catch {
@@ -132,7 +137,7 @@ async function reading(env: Secrets): Promise<ReadingStats> {
       json<{ unreads: Record<string, number> }>(`${MINIFLUX}/v1/feeds/counters`, auth),
       json<unknown[]>(`${MINIFLUX}/v1/feeds`, auth),
       json<{ entries: { title: string; url: string; published_at: string; feed: { title: string } }[] }>(
-        `${MINIFLUX}/v1/entries?status=unread&order=published_at&direction=desc&limit=4`,
+        `${MINIFLUX}/v1/entries?status=unread&order=published_at&direction=desc&limit=20`,
         auth,
       ),
     ]);

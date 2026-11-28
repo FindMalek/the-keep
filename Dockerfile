@@ -1,4 +1,13 @@
-FROM oven/bun:1.4.2-alpine
+# journalctl must be at least as new as the host's systemd (259 on Ubuntu 26.04) or it can't read the journal files,
+# so the runtime is the host's own release with the bun binary copied in. systemd is installed only for journalctl;
+# nothing runs it.
+FROM oven/bun:1.4.2-debian AS bun
+
+FROM ubuntu:26.04
+RUN apt-get update \
+  && apt-get install -y --no-install-recommends systemd ca-certificates wget \
+  && rm -rf /var/lib/apt/lists/*
+COPY --from=bun /usr/local/bin/bun /usr/local/bin/bun
 WORKDIR /app
 COPY package.json bun.lock ./
 RUN bun install --frozen-lockfile --production

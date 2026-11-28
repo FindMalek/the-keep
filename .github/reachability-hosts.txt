@@ -1,0 +1,43 @@
+# Public sites checked from outside every 10 minutes by workflows/reachability.yml.
+# One host per line. Tailnet-only hosts and PR previews don't belong here; the box's own
+# keep-reachability job covers every Traefik host, previews included.
+# Not listed until their DNS points at the box: cert, ntfy, preview.
+albums.findmalek.engineer
+analytics.findmalek.engineer
+api-lehoetel.findmalek.engineer
+api-ritorno.findmalek.engineer
+api-staging-lehoetel.findmalek.engineer
+api-staging-ritorno.findmalek.engineer
+api.ceraghit.findmalek.engineer
+api.skiffr.findmalek.engineer
+app-lehoetel.findmalek.engineer
+app-ritorno.findmalek.engineer
+app-staging-lehoetel.findmalek.engineer
+app-staging-ritorno.findmalek.engineer
+ceraghit.findmalek.engineer
+dashboard.ceraghit.findmalek.engineer
+dashboard.skiffr.findmalek.engineer
+demo.lodesong.findmalek.engineer
+docs-lehoetel.findmalek.engineer
+docs-ritorno.findmalek.engineer
+docs-staging-lehoetel.findmalek.engineer
+docs-staging-ritorno.findmalek.engineer
+docs.skiffr.findmalek.engineer
+dokploy.findmalek.engineer
+drive.findmalek.engineer
+errors.findmalek.engineer
+lehoetel.findmalek.engineer
+mc.findmalek.engineer
+music.findmalek.engineer
+photos-api.findmalek.engineer
+photos.findmalek.engineer
+player.findmalek.engineer
+ritorno.findmalek.engineer
+s3.findmalek.engineer
+skiffr.findmalek.engineer
+staging-lehoetel.findmalek.engineer
+staging-ritorno.findmalek.engineer
+trigger.findmalek.engineer
+turbo-lehoetel.findmalek.engineer
+vault.findmalek.engineer
+whodb-lehoetel.findmalek.engineer

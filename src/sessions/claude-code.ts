@@ -13,7 +13,11 @@ function userText(content: unknown): string {
     .join("\n");
 }
 
-/** Parses one Claude Code session file (JSONL). Streaming splits one API reply into several lines sharing `message.id`; they are merged. */
+/**
+ * Parses one Claude Code session file (JSONL). Streaming splits one API reply into several lines sharing `message.id`; they are merged.
+ * `sidechain` is for a subagent file (`<project>/<session>/subagents/agent-<id>.jsonl`): every line is a sidechain line
+ * and its `sessionId` is the parent conversation's.
+ */
 export function parseClaudeSession(jsonl: string, machine: string, sidechain = false): ParsedSession | null {
   const lines: Json[] = [];
   for (const raw of jsonl.split("\n")) {
@@ -25,9 +29,9 @@ export function parseClaudeSession(jsonl: string, machine: string, sidechain = f
     }
   }
 
-  const parentId = lines.find((l) => typeof l.sessionId === "string")?.sessionId as string | undefined;
+  const sessionId = lines.find((l) => typeof l.sessionId === "string")?.sessionId as string | undefined;
   const agentId = lines.find((l) => typeof l.agentId === "string")?.agentId as string | undefined;
-  const nativeId = sidechain ? (agentId ? `agent:${agentId}` : undefined) : parentId;
+  const nativeId = sidechain ? (agentId ? `agent:${agentId}` : undefined) : sessionId;
   if (!nativeId) return null;
 
   const messages: SessionMessage[] = [];
@@ -119,11 +123,12 @@ export function parseClaudeSession(jsonl: string, machine: string, sidechain = f
       machine,
       directory,
       branch,
-      title: title ?? messages.find((m) => m.role === "user")?.text.trim().replace(/\s+/g, " ").slice(0, 80) ?? null,
-      startedAt: stamps.length ? Math.min(...stamps) : 0,
-      endedAt: stamps.length ? Math.max(...stamps) : 0,
+      title: title ?? firstPrompt(messages.find((m) => m.role === "user")?.text ?? null),
+      startedAt: Math.min(...stamps),
+      endedAt: Math.max(...stamps),
       costUsd: costRuns.size ? costUsd : null,
       models: [...models.values()],
+      ...(sidechain && sessionId ? { parentId: `claude-code:${machine}:${sessionId}` } : {}),
     },
     messages,
   };
@@ -147,4 +152,12 @@ function blank(role: SessionMessage["role"], text: string, at: number): SessionM
     latencyMs: null,
     at,
   };
+}
+
+/** Markup stripped before cutting, so a title never ends inside `<command-message`. */
+function firstPrompt(text: string | null): string | null {
+  if (!text) return null;
+  const words = text.replace(/<[^>]*>/g, " ").replace(/\s+/g, " ").trim();
+  if (!words) return null;
+  return words.length > 80 ? `${words.slice(0, 79).replace(/\s+\S*$/, "")}…` : words;
 }

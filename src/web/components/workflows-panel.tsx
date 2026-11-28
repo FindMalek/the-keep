@@ -1,126 +1,170 @@
 import { useEffect, useMemo, useState } from "react";
 import type { N8nStats } from "../../shared/types";
 import { since } from "../lib/time";
-import { Chip } from "./chip";
 import { ActionButton } from "./action-button";
+import { Empty, Panel, Subhead } from "./panel";
+import { StatusSquare } from "./status-square";
 
 type Workflow = N8nStats["workflows"][number];
 
+const NODE_W = 150;
+const NODE_H = 40;
+
+/** n8n's own canvas positions, scaled down; edges are elbows, nodes are boxes. */
 function WorkflowGraph({ workflow }: { workflow: Workflow }) {
   const graph = useMemo(() => {
-    if (!workflow.nodes.length) return { nodes: [], width: 220, height: 100 };
+    if (!workflow.nodes.length) return null;
     const minX = Math.min(...workflow.nodes.map((node) => node.x));
     const minY = Math.min(...workflow.nodes.map((node) => node.y));
-    const maxX = Math.max(...workflow.nodes.map((node) => node.x));
-    const maxY = Math.max(...workflow.nodes.map((node) => node.y));
-    const sx = Math.min(1, 1800 / (maxX - minX || 1));
-    const sy = Math.min(1, 1000 / (maxY - minY || 1));
-    const nodes = workflow.nodes.map((node) => ({ ...node, left: 20 + (node.x - minX) * sx, top: 20 + (node.y - minY) * sy }));
-    return { nodes, width: 220 + (maxX - minX) * sx, height: 100 + (maxY - minY) * sy };
+    const scale = 0.7;
+    const nodes = workflow.nodes.map((node) => ({ ...node, left: 8 + (node.x - minX) * scale, top: 8 + (node.y - minY) * scale }));
+    const width = Math.max(...nodes.map((node) => node.left)) + NODE_W + 8;
+    const height = Math.max(...nodes.map((node) => node.top)) + NODE_H + 8;
+    return { nodes, width, height, lookup: new Map(nodes.map((node) => [node.name, node])) };
   }, [workflow]);
 
-  if (!graph.nodes.length) return <p className="empty">no nodes returned by n8n</p>;
-  const lookup = new Map(graph.nodes.map((node) => [node.name, node]));
+  if (!graph) return <Empty>no nodes in this workflow</Empty>;
   return (
-    <div className="workflow-canvas-scroll" aria-label={`${workflow.name} graph`}>
-      <div className="workflow-canvas" style={{ width: graph.width, height: graph.height }}>
+    <div className="flow-scroll" aria-label={`${workflow.name} nodes`}>
+      <div className="flow" style={{ width: graph.width, height: graph.height }}>
         <svg width={graph.width} height={graph.height} aria-hidden="true">
           {workflow.edges.map((edge, index) => {
-            const from = lookup.get(edge.from);
-            const to = lookup.get(edge.to);
+            const from = graph.lookup.get(edge.from);
+            const to = graph.lookup.get(edge.to);
             if (!from || !to) return null;
-            const x1 = from.left + 164, y1 = from.top + 28, x2 = to.left, y2 = to.top + 28;
-            return <path key={`${edge.from}-${edge.to}-${index}`} d={`M ${x1} ${y1} C ${x1 + 45} ${y1}, ${x2 - 45} ${y2}, ${x2} ${y2}`} />;
+            const x1 = from.left + NODE_W;
+            const y1 = from.top + NODE_H / 2;
+            const x2 = to.left;
+            const y2 = to.top + NODE_H / 2;
+            const mid = (x1 + x2) / 2;
+            return <path key={`${edge.from}-${edge.to}-${index}`} d={`M ${x1} ${y1} H ${mid} V ${y2} H ${x2}`} />;
           })}
         </svg>
-        {graph.nodes.map((node) => <div key={node.name} className={`workflow-node${node.disabled ? " workflow-node-disabled" : ""}`} style={{ left: node.left, top: node.top }}>
-          <strong>{node.name}</strong><span>{node.type.split(".").pop()}</span>
-        </div>)}
+        {graph.nodes.map((node) => (
+          <div key={node.name} className={`flow-node${node.disabled ? " is-off" : ""}`} style={{ left: node.left, top: node.top, width: NODE_W, height: NODE_H }}>
+            <span className="ellipsis">{node.name}</span>
+            <span className="muted small ellipsis">{node.disabled ? "disabled" : node.type.split(".").pop()}</span>
+          </div>
+        ))}
       </div>
     </div>
   );
 }
 
-export function WorkflowsPanel() {
+function useN8n(): N8nStats | null {
   const [data, setData] = useState<N8nStats | null>(null);
-  const [selected, setSelected] = useState<string | null>(null);
-
   useEffect(() => {
     let cancelled = false;
     const load = async () => {
       try {
         const response = await fetch("/api/n8n");
-        if (!response.ok) throw new Error("dashboard request failed");
-        if (!cancelled) setData(await response.json() as N8nStats);
+        if (!response.ok) throw new Error(String(response.status));
+        if (!cancelled) setData((await response.json()) as N8nStats);
       } catch {
         if (!cancelled) setData((previous) => previous ?? { status: "unreachable", workflows: [], executions: [], executionsAvailable: false, truncated: false });
       }
     };
     void load();
     const timer = setInterval(load, 60_000);
-    return () => { cancelled = true; clearInterval(timer); };
+    return () => {
+      cancelled = true;
+      clearInterval(timer);
+    };
   }, []);
-
-  const workflow = data?.workflows.find((item) => item.id === selected) ?? data?.workflows[0];
-  const names = new Map(data?.workflows.map((item) => [item.id, item.name]));
-  return (
-    <section className="panel" aria-label="n8n workflows">
-      <header className="panel-header"><h2>n8n workflows</h2><span className="panel-meta">{data?.status ?? "loading"}</span></header>
-      <div className="panel-body">
-        {!data ? <p className="empty">loading workflows</p> : data.status === "not configured" ? (
-          <p className="empty">Set N8N_URL and an N8N_API_KEY to connect workflows and execution history.</p>
-        ) : data.status === "unreachable" ? (
-          <p className="empty">n8n could not be reached or rejected the API key.</p>
-        ) : data.workflows.length === 0 ? <p className="empty">no workflows returned by n8n</p> : (
-          <WorkflowContent data={data} workflow={workflow} onSelect={setSelected} names={names} />
-        )}
-      </div>
-    </section>
-  );
+  return data;
 }
 
-function WorkflowContent({ data, workflow, onSelect, names }: {
-  data: N8nStats;
-  workflow: Workflow | undefined;
-  onSelect: (id: string) => void;
-  names: Map<string, string>;
-}) {
-  return (
+const failed = (status: string) => status === "error" || status === "crashed";
+
+export function WorkflowsPanel() {
+  const data = useN8n();
+  const [selected, setSelected] = useState<string | null>(null);
+  const workflows = data?.workflows ?? [];
+  const runs = data?.executions ?? [];
+  const names = new Map(workflows.map((item) => [item.id, item.name]));
+  const workflow = workflows.find((item) => item.id === selected) ?? workflows[0];
+  const dayAgo = Date.now() - 86_400_000;
+  const failing = new Set(runs.filter((run) => failed(run.status) && Date.parse(run.startedAt ?? "") > dayAgo).map((run) => run.workflowId));
+  const lastRun = (id: string) => runs.find((run) => run.workflowId === id);
+
+  const meta = !data ? (
+    "loading"
+  ) : data.status !== "connected" ? (
+    <span className="level-warn">{data.status}</span>
+  ) : (
     <>
-      {data.truncated && <p className="muted">showing the first 300 workflows</p>}
-      <div className="workflow-layout">
-        <div className="workflow-list" aria-label="select workflow">
-          {data.workflows.map((item) => <button type="button" key={item.id} aria-pressed={item.id === workflow?.id} onClick={() => onSelect(item.id)}>
-            <span>{item.name}</span><span className="muted">{item.active ? "active" : "inactive"} · {item.nodes.length} nodes</span>
-          </button>)}
-        </div>
-        <div className="workflow-detail">
-          {workflow && <><div className="workflow-heading"><strong>{workflow.name}</strong><Chip tone={workflow.active ? "solid" : "plain"}>{workflow.active ? "active" : "inactive"}</Chip>{workflow.runnable && <ActionButton endpoint="/api/n8n/run" action={`run-n8n:${workflow.id}`} label="run workflow" confirm="click again to run" danger />}</div><WorkflowGraph workflow={workflow} /></>}
-        </div>
-      </div>
-      <p className="muted small">Only explicitly allowed workflows can run here. Running a workflow may change data; check recent executions for the outcome.</p>
-      {!!data.actions?.length && <><h3 className="subhead">dashboard requests</h3><table className="table"><tbody>
-        {data.actions.slice(0, 10).map((action, index) => <tr key={`${action.at}-${index}`}>
-          <td>{action.workflowId ? names.get(action.workflowId) ?? action.workflowId : "invalid request"}</td>
-          <td>{action.status === "dispatched" ? "sent to n8n · outcome not confirmed" : action.status}</td>
-          <td className="right muted">{!Number.isNaN(Date.parse(action.at)) ? since(Date.parse(action.at)) : "—"}</td>
-        </tr>)}
-      </tbody></table></>}
-      <h3 className="subhead">recent executions · metadata only</h3>
-      <ExecutionList data={data} names={names} />
+      {workflows.filter((item) => item.active).length}/{workflows.length} active
+      {failing.size ? <span className="level-crit"> · {failing.size} failed today</span> : ""}
     </>
   );
-}
 
-function ExecutionList({ data, names }: { data: N8nStats; names: Map<string, string> }) {
-  if (!data.executionsAvailable) return <p className="empty">execution history unavailable; check API permissions</p>;
-  if (!data.executions.length) return <p className="empty">no executions reported</p>;
-  return <table className="table"><thead><tr><th>workflow</th><th>status</th><th className="hide-narrow">trigger</th><th className="right">started</th></tr></thead><tbody>
-    {data.executions.map((run) => <tr key={run.id}>
-      <td>{names.get(run.workflowId) ?? run.workflowId}</td>
-      <td><Chip tone={run.status === "error" || run.status === "crashed" ? "crit" : "plain"}>{run.status}</Chip></td>
-      <td className="hide-narrow muted">{run.mode}</td>
-      <td className="right muted">{run.startedAt && !Number.isNaN(Date.parse(run.startedAt)) ? since(Date.parse(run.startedAt)) : "—"}</td>
-    </tr>)}
-  </tbody></table>;
+  return (
+    <Panel id="workflows" title="n8n workflows" span={8} meta={meta}>
+      {!data ? (
+        <Empty>loading</Empty>
+      ) : data.status === "not configured" ? (
+        <Empty>keep-n8n-status hasn't written n8n-status.json yet</Empty>
+      ) : data.status === "unreachable" ? (
+        <Empty>n8n's database could not be read</Empty>
+      ) : workflows.length === 0 ? (
+        <Empty>no workflows</Empty>
+      ) : (
+        <div className="stack">
+          <ul className="list" aria-label="workflows">
+            {workflows.map((item) => {
+              const last = lastRun(item.id);
+              return (
+                <li key={item.id}>
+                  <button type="button" className={`line row-button${item.id === workflow?.id ? " is-current" : ""}`} aria-pressed={item.id === workflow?.id} onClick={() => setSelected(item.id)}>
+                    <span>
+                      <StatusSquare status={failing.has(item.id) ? "down" : item.active ? "ok" : "warn"} label={failing.has(item.id) ? "a recent run failed" : item.active ? "active" : "inactive"} /> {item.name}
+                    </span>
+                    <span className="facts-inline muted">
+                      <span>{item.nodes.length} nodes</span>
+                      <span className="n-ago">{last?.startedAt ? since(Date.parse(last.startedAt)) : "—"}</span>
+                    </span>
+                  </button>
+                </li>
+              );
+            })}
+          </ul>
+          {workflow && (
+            <>
+              <Subhead
+                aside={
+                  workflow.runnable ? (
+                    <ActionButton endpoint="/api/n8n/run" action={`run-n8n:${workflow.id}`} label="run now" confirm="tap again to run" danger />
+                  ) : (
+                    <span className="muted">runs on its own schedule</span>
+                  )
+                }
+              >
+                {workflow.name}
+              </Subhead>
+              <WorkflowGraph workflow={workflow} />
+            </>
+          )}
+          <Subhead aside={data.executionsAvailable ? `last ${runs.length}` : "unavailable"}>recent runs</Subhead>
+          {!data.executionsAvailable || runs.length === 0 ? (
+            <Empty>no runs recorded</Empty>
+          ) : (
+            <ul className="list">
+              {runs.slice(0, 12).map((run) => (
+                <li key={run.id} className="line">
+                  <span>
+                    <StatusSquare status={failed(run.status) ? "down" : run.status === "success" ? "ok" : "warn"} label={run.status} /> {names.get(run.workflowId) ?? run.workflowId}
+                  </span>
+                  <span className="facts-inline muted">
+                    <span className={failed(run.status) ? "level-crit" : ""}>{run.status}</span>
+                    <span>{run.mode}</span>
+                    <span className="n-ago">{run.startedAt ? since(Date.parse(run.startedAt)) : "—"}</span>
+                  </span>
+                </li>
+              ))}
+            </ul>
+          )}
+        </div>
+      )}
+    </Panel>
+  );
 }

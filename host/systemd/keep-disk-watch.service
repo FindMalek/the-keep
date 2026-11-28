@@ -1,0 +1,6 @@
+[Unit]
+Description=Alert on full disks and stale local backups
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/keep-disk-watch

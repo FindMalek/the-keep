@@ -13,10 +13,10 @@ export function isParsedSession(value: unknown): value is ParsedSession {
     TOOLS.has(s.tool) &&
     typeof s.machine === "string" &&
     typeof s.nativeId === "string" &&
-    (s.repository == null || (typeof s.repository === "string" && s.repository.length <= 255)) &&
     Number.isFinite(s.startedAt) &&
     Number.isFinite(s.endedAt) &&
     Array.isArray(s.models) &&
+    (s.parentId === undefined || s.parentId === null || (typeof s.parentId === "string" && s.parentId.length < 200)) &&
     Array.isArray(v.messages) &&
     v.messages.every(
       (m) => ["user", "assistant", "system"].includes(m?.role) && typeof m.text === "string" && Number.isFinite(m.seq) && Array.isArray(m.toolCalls),

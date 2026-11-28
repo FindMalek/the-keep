@@ -1,0 +1,4 @@
+#!/bin/sh
+# Pings healthchecks.io every minute; when the pings stop, healthchecks alerts Telegram from outside the box.
+. /etc/keep/bot.env
+exec curl -fsS -m 10 --retry 3 -o /dev/null "https://hc-ping.com/$HC_PING_KEY/keep-heartbeat?create=1"

@@ -18,7 +18,7 @@ WORKFLOWS = '''SELECT coalesce(json_agg(row_to_json(w)), '[]'::json) FROM (
 ) w'''
 EXECUTIONS = '''SELECT coalesce(json_agg(row_to_json(e)), '[]'::json) FROM (
   SELECT id::text AS id, "workflowId", status, mode, "startedAt", "stoppedAt"
-  FROM execution_entity WHERE "deletedAt" IS NULL
+  FROM execution_entity
   ORDER BY "startedAt" DESC NULLS LAST LIMIT 50
 ) e'''
 

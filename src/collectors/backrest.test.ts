@@ -30,6 +30,9 @@ test("uses fresh local snapshot metadata and rejects stale readings", async () =
   const reading = { status: "connected", updatedAt: Date.now(), plans: [], snapshots: [], snapshotsAvailable: true };
   await Bun.write(path, JSON.stringify(reading));
   expect((await collectBackrest(null, dir)).source).toBe("host");
-  await Bun.write(path, JSON.stringify({ ...reading, updatedAt: Date.now() - 1_800_001 }));
+  // keep-backrest-status runs once a day, so a reading from this morning is still current
+  await Bun.write(path, JSON.stringify({ ...reading, updatedAt: Date.now() - 8 * 3600_000 }));
+  expect((await collectBackrest(null, dir)).status).toBe("connected");
+  await Bun.write(path, JSON.stringify({ ...reading, updatedAt: Date.now() - 27 * 3600_000 }));
   expect((await collectBackrest(null, dir)).status).toBe("unreachable");
 });

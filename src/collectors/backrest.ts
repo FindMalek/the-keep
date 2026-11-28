@@ -5,6 +5,8 @@ type Summary = { id: string; totalSnapshots?: string; protectedBytes?: string; b
 type Operation = { snapshotId?: string; planId?: string; repoId?: string; unixTimeStartMs?: string; operationIndexSnapshot?: { forgot?: boolean } };
 
 const empty = (status: BackrestStats["status"]): BackrestStats => ({ status, plans: [], snapshotsAvailable: false, snapshots: [] });
+/** keep-backrest-status runs daily at 06:00 so the backup HDD can sleep; older than a day and a bit means it stopped. */
+const MAX_AGE_MS = 26 * 3600_000;
 const number = (value: string | undefined): number => Number(value) || 0;
 
 async function hostReading(dataDir: string): Promise<BackrestStats> {
@@ -13,7 +15,7 @@ async function hostReading(dataDir: string): Promise<BackrestStats> {
   try {
     const data = JSON.parse(text) as BackrestStats & { updatedAt?: number };
     const age = Date.now() - (data.updatedAt ?? 0);
-    if (data.status !== "connected" || age < -60_000 || age > 1_800_000 || !Array.isArray(data.plans) || !Array.isArray(data.snapshots)) return empty("unreachable");
+    if (data.status !== "connected" || age < -60_000 || age > MAX_AGE_MS || !Array.isArray(data.plans) || !Array.isArray(data.snapshots)) return empty("unreachable");
     return { status: "connected", source: "host", plans: data.plans, snapshots: data.snapshots, snapshotsAvailable: data.snapshotsAvailable };
   } catch {
     return empty("unreachable");

@@ -61,10 +61,11 @@ async function diskTemperatures(): Promise<Map<string, number>> {
   return byDevice;
 }
 
-export async function collectMounts(mounts: MountConfig[]): Promise<MountStats[]> {
+export async function collectMounts(mounts: MountConfig[], backupLabels: string[] = []): Promise<MountStats[]> {
   const devices = await hostMounts();
   return Promise.all(
     mounts.map(async ({ label, path, probe }) => {
+      const role = backupLabels.includes(label) ? ("backup" as const) : ("data" as const);
       try {
         const fs = await statfs(probe);
         return {
@@ -73,9 +74,10 @@ export async function collectMounts(mounts: MountConfig[]): Promise<MountStats[]
           device: devices.get(path) ?? null,
           total: fs.blocks * fs.bsize,
           used: (fs.blocks - fs.bfree) * fs.bsize,
+          role,
         };
       } catch {
-        return { label, path, device: devices.get(path) ?? null, total: 0, used: 0 };
+        return { label, path, device: devices.get(path) ?? null, total: 0, used: 0, role };
       }
     }),
   );
