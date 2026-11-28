@@ -12,10 +12,17 @@ import { navigate, setQuery, useSearch } from "../lib/router";
 import { clock, dayLabel, since } from "../lib/time";
 import { useFacets, useSessionList, type SessionQuery } from "../lib/use-sessions";
 
-const RANGES = ["7d", "30d", "90d"] as const;
+const RANGES = ["7d", "30d", "90d", "all"] as const;
 type Range = (typeof RANGES)[number];
-const DAYS: Record<Range, number> = { "7d": 7, "30d": 30, "90d": 90 };
 const DAY = 86_400_000;
+
+/** Days the range covers, today included; "all" reaches back to the first day with usage. */
+function spanOf(range: Range, usage: UsageDay[]): number {
+  if (range !== "all") return { "7d": 7, "30d": 30, "90d": 90 }[range];
+  const first = usage.reduce<string | null>((min, row) => (min === null || row.day < min ? row.day : min), null);
+  if (!first) return 30;
+  return Math.max(7, Math.round((dayStart(isoDay(Date.now())) - dayStart(first)) / DAY) + 1);
+}
 
 const tokensOf = (row: { tokensIn: number; tokensOut: number; cacheRead: number; cacheWrite: number }) => row.tokensIn + row.tokensOut + row.cacheRead + row.cacheWrite;
 const shortModel = (model: string) => model.replace(/^claude-/, "").replace(/^anthropic\//, "");
@@ -53,11 +60,14 @@ function CostPanel({ usage, range, onDay }: { usage: UsageDay[]; range: Range; o
   const days = byDay(usage);
   // A calendar of mostly empty squares says nothing; it appears once there are two weeks of history.
   const showCalendar = days.size >= 14 && range !== "7d";
+  const span = spanOf(range, usage);
   const today = new Date();
   const todayStart = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
   // Weeks run Monday to Sunday; the last column holds this week.
   const weekday = (today.getDay() + 6) % 7;
-  const weeks = range === "90d" ? 13 : 5;
+  const weeks = range === "30d" ? 5 : Math.max(13, Math.ceil(span / 7));
+  // A year of weeks still fits the box: squares shrink once there are more than a quarter's worth.
+  const cell = weeks > 13 ? 12 : 16;
   const firstMonday = todayStart - weekday * DAY - (weeks - 1) * 7 * DAY;
   const cellDay = (row: number, column: number) => firstMonday + (column * 7 + row) * DAY;
   const matrix = Array.from({ length: 7 }, (_, row) =>
@@ -74,18 +84,18 @@ function CostPanel({ usage, range, onDay }: { usage: UsageDay[]; range: Range; o
     if (column === 0) return new Date(cellDay(0, 2)).getMonth() === start.getMonth() ? label : "";
     return start.getMonth() !== previous.getMonth() ? label : "";
   });
-  const span = DAYS[range];
   const series = Array.from({ length: span }, (_, index) => todayStart - (span - 1 - index) * DAY);
 
   return (
-    <Panel id="cost" title="cost per day" span={8} meta={`${showCalendar ? `${weeks} weeks · darker is more · ` : ""}pick a day to list its sessions`}>
+    <Panel id="cost" title="cost per day" span={8} meta={`${showCalendar ? `${weeks} weeks · ` : ""}pick a day to list its sessions`}>
       {showCalendar && (
       <HeatMatrix
         matrix={matrix}
         rowLabels={["mon", "", "wed", "", "fri", "", "sun"]}
         columnLabels={months}
-        cell={16}
-        gap={4}
+        cell={cell}
+        gap={cell > 12 ? 4 : 3}
+        format={usd}
         tip={(row, column) => {
           const start = cellDay(row, column);
           const total = days.get(isoDay(start));
@@ -139,7 +149,7 @@ function CostPanel({ usage, range, onDay }: { usage: UsageDay[]; range: Range; o
   );
 }
 
-function ModelsPanel({ usage, onModel }: { usage: UsageDay[]; onModel: (model: string) => void }) {
+function ModelsPanel({ usage, range, onModel }: { usage: UsageDay[]; range: Range; onModel: (model: string) => void }) {
   const models = new Map<string, { tokensIn: number; tokensOut: number; cache: number; usd: number; unpriced: number }>();
   for (const row of usage) {
     const entry = models.get(row.model) ?? { tokensIn: 0, tokensOut: 0, cache: 0, usd: 0, unpriced: 0 };
@@ -153,7 +163,7 @@ function ModelsPanel({ usage, onModel }: { usage: UsageDay[]; onModel: (model: s
   const rows = [...models].sort((a, b) => b[1].usd - a[1].usd);
   const unpriced = rows.filter(([, entry]) => entry.unpriced > 0);
   return (
-    <Panel id="models" title="by model" span={4} meta="in · out · cache · cost">
+    <Panel id="models" title="by model" span={4} meta={`${range === "all" ? "all time" : range} · in · out · cache · cost`}>
       {rows.length === 0 ? (
         <Empty>no usage in this range</Empty>
       ) : (
@@ -205,7 +215,13 @@ function SessionRow({ row }: { row: SessionListRow }) {
     <li className="session row-target">
       <span className="session-when">{clock(row.startedAt)}</span>
       <a className="session-title ellipsis" href={`/sessions?s=${encodeURIComponent(row.id)}`} onClick={navigate}>
+        {row.agentRun && <span className="session-chip is-lead" title="a subagent run whose conversation isn't stored">run</span>}
         {cleanTitle(row.title) || row.id.split(":").at(-1)}
+        {row.subagents > 0 && (
+          <span className="session-chip" title={`${row.subagents} subagent runs, included in tokens and cost`}>
+            +{row.subagents} {row.subagents === 1 ? "subagent" : "subagents"}
+          </span>
+        )}
       </a>
       <span className="session-project ellipsis muted" title={row.directory ?? undefined}>
         {projectOf(row.directory)}
@@ -244,7 +260,9 @@ export function SessionsPage({ aiUsage }: { aiUsage: AiUsageEntry[] }) {
     to: search.get("to") ? Number(search.get("to")) : null,
   };
   const [text, setText] = useState(query.q);
-  const list = useSessionList(query);
+  // The list follows the range unless a day is picked; "all" lists everything.
+  const rangeFrom = range === "all" ? null : dayStart(isoDay(Date.now() - (spanOf(range, []) - 1) * DAY));
+  const list = useSessionList({ ...query, from: query.from ?? rangeFrom });
   const facets = useFacets();
   const more = useRef<HTMLDivElement>(null);
 
@@ -264,7 +282,8 @@ export function SessionsPage({ aiUsage }: { aiUsage: AiUsageEntry[] }) {
   if (selected) return <SessionDetail id={selected} />;
 
   const usage = list.usage ?? [];
-  const cutoff = isoDay(Date.now() - (DAYS[range] - 1) * DAY);
+  const span = spanOf(range, usage);
+  const cutoff = isoDay(Date.now() - (span - 1) * DAY);
   const inRange = usage.filter((row) => row.day >= cutoff);
   const cost = inRange.reduce((sum, row) => sum + row.costUsd, 0);
   const tokens = inRange.reduce((sum, row) => sum + tokensOf(row), 0);
@@ -276,9 +295,9 @@ export function SessionsPage({ aiUsage }: { aiUsage: AiUsageEntry[] }) {
   const perDay = activeDays ? cost / activeDays : 0;
 
   const tiles: Tile[] = [
-    { key: "cost", label: `cost ${range}`, value: usd(cost), sub: `${usd(perDay)}/day · ${activeDays} active`, series: [...byDay(inRange).values()].map((day) => day.usd), target: "cost" },
+    { key: "cost", label: range === "all" ? "cost all time" : `cost ${range}`, value: usd(cost), sub: `${usd(perDay)}/day · ${activeDays} active`, series: [...byDay(inRange).values()].map((day) => day.usd), target: "cost" },
     { key: "today", label: "today", value: usd(today?.usd ?? 0), sub: `${compact(today?.tokens ?? 0)} tokens`, target: "list" },
-    { key: "tokens", label: `tokens ${range}`, value: compact(tokens), sub: "in + out + cache", target: "models" },
+    { key: "tokens", label: range === "all" ? "tokens all time" : `tokens ${range}`, value: compact(tokens), sub: "in + out + cache", target: "models" },
     { key: "cache", label: "cache hit", value: percent(cacheHit), sub: "of prompt tokens", ratio: cacheHit, thresholds: { warn: 2, crit: 2 }, target: "models" },
     ...limitTiles(aiUsage),
   ];
@@ -288,13 +307,13 @@ export function SessionsPage({ aiUsage }: { aiUsage: AiUsageEntry[] }) {
 
   return (
     <>
-      <PageHeader title="sessions" meta={`${list.total.toLocaleString()} ${query.q || query.tool || query.model || query.project || query.machine || query.from ? "match" : "logged"} · prices from models.dev${list.pricesUpdatedAt ? `, ${since(list.pricesUpdatedAt)}` : ""}`}>
+      <PageHeader title="sessions" meta={`${list.total.toLocaleString()} conversations ${query.q || query.tool || query.model || query.project || query.machine || query.from ? "match" : range === "all" ? "logged" : `in ${range}`} · prices from models.dev${list.pricesUpdatedAt ? `, ${since(list.pricesUpdatedAt)}` : ""}`}>
         <Tabs options={RANGES} value={range} onChange={(next) => setQuery({ range: next === "30d" ? null : next })} label="range" />
       </PageHeader>
       <div className="grid">
         <StatTiles tiles={tiles} label="ai usage" />
         <CostPanel usage={usage} range={range} onDay={(day) => setQuery({ from: dayStart(day), to: dayStart(day) + DAY })} />
-        <ModelsPanel usage={inRange} onModel={(model) => setQuery({ model })} />
+        <ModelsPanel usage={inRange} range={range} onModel={(model) => setQuery({ model })} />
         <Panel id="list" title="sessions" meta={`${list.rows.length} of ${list.total}`} flush>
           <div className="box-pad">
             <FilterBar query={text} onQuery={setText} placeholder="search titles, projects, branches" className="session-filters">

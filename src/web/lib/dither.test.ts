@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { densityLevel, level, onPixels, peaks, TRACK } from "./dither";
+import { densityLevel, heatStep, inkAlpha, level, onPixels, peaks, SOLID, TRACK } from "./dither";
 
 describe("dither", () => {
   test("level maps 0..1 onto 17 densities and never hides a non-zero value", () => {
@@ -14,11 +14,21 @@ describe("dither", () => {
     for (let lvl = 0; lvl <= 16; lvl += 1) expect(onPixels(lvl)).toHaveLength(lvl);
   });
 
-  test("density squares put any value above the empty track", () => {
+  test("density squares use five distinct steps and put any value above the empty track", () => {
     expect(densityLevel(0)).toBe(TRACK);
-    expect(densityLevel(0.01)).toBeGreaterThan(TRACK);
-    expect(densityLevel(1)).toBe(16);
-    expect(densityLevel(0.5) - densityLevel(0.25)).toBe(4);
+    expect(heatStep(0.01)).toBe(1);
+    expect(heatStep(0.25)).toBe(1);
+    expect(heatStep(0.26)).toBe(2);
+    expect(heatStep(1)).toBe(4);
+    expect(heatStep(5)).toBe(4);
+    expect(new Set([0, 0.1, 0.4, 0.6, 0.9].map(densityLevel)).size).toBe(5);
+    expect(densityLevel(1)).toBe(SOLID);
+  });
+
+  test("ink gets lighter as density drops", () => {
+    expect(inkAlpha(TRACK)).toBeLessThan(inkAlpha(8));
+    expect(inkAlpha(8)).toBeLessThan(inkAlpha(12));
+    expect(inkAlpha(SOLID)).toBe(1);
   });
 
   test("peaks keeps each bucket's maximum and leaves gaps as gaps", () => {

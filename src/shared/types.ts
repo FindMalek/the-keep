@@ -571,6 +571,23 @@ export interface BucketListing {
   objects: BucketObject[];
   /** Pass as `after` for the next page; null when this is the last. */
   next: string | null;
+  /** Whether the dashboard may delete in this bucket, and if not, why. Set by the API on every page. */
+  deletable?: boolean;
+  locked?: string | null;
+}
+
+/** Everything under a prefix, counted recursively. */
+export interface PrefixTotal {
+  objects: number;
+  bytes: number;
+  /** Counting stopped at the cap; the numbers are a floor. */
+  capped: boolean;
+}
+
+export interface BucketDeleteResult {
+  deleted: number;
+  bytes: number;
+  failed: string[];
 }
 
 export interface PriceTier {
@@ -616,6 +633,10 @@ export interface SessionListRow {
   reportedUsd: number | null;
   unpriced: number;
   models: string[];
+  /** Subagent runs grouped under this conversation; their tokens and cost are included above. */
+  subagents: number;
+  /** A subagent run whose conversation isn't stored, listed on its own. */
+  agentRun: boolean;
 }
 
 export interface UsageDay {

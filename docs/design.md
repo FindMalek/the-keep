@@ -206,26 +206,26 @@ narrower than JetBrains', so mixed rows misalign.
 
 ### 2.3 Color tokens
 
-Warm monochrome, adapted from the reference. Its warm 4-step activity scale (`#65452e…#ffd19a`) is **not**
-adopted: it's orange-brown, and it would collide with the warn/crit meaning. Dither density replaces a color
-scale. The reference's sky-blue light theme is **not** adopted either, because it breaks monochrome. Light mode
-is warm paper instead.
+Pure monochrome: black, white and true-neutral grays (zero hue, zero saturation), the values of the
+pre-redesign Zed Monochrome theme. An earlier warm-paper tint was dropped at the owner's request. No color
+scale anywhere: dither density plus an ink ramp (see 2.7) carries magnitude. Orange and red are the only hues
+and only mean near limit and at limit. In light mode the page is a step darker than the boxes (`#d9d9d9` under
+`#f5f5f5`) so boxes still read as boxes.
 
 | token | dark | light | use |
 |---|---|---|---|
-| `--bg` | `#181715` | `#e8e5df` | page background |
-| `--card` | `#201f1c` | `#f4f2ee` | box background |
-| `--card-hover` | `#292825` | `#ebe8e2` | row/tile hover |
-| `--fg` | `#fff7f0` | `#181715` | primary text, ink for dither |
-| `--fg-2` | `#d6cfc7` | `#3d3a35` | secondary values |
-| `--muted` | `#aaa39b` | `#6b665e` | labels, metas (≥4.5:1 on card) |
-| `--faint` | `#6e6862` | `#a39d94` | disabled, axis ticks only, never body text |
-| `--line` | `rgba(255,247,240,.15)` | `rgba(24,23,21,.16)` | box borders, table rules |
-| `--line-strong` | `rgba(255,247,240,.32)` | `rgba(24,23,21,.38)` | hovered border, inputs, buttons |
+| `--bg` | `#101010` | `#d9d9d9` | page background |
+| `--card` | `#191919` | `#f5f5f5` | box background |
+| `--card-hover` | `#222222` | `#eaeaea` | row/tile hover |
+| `--fg` | `#ebebeb` | `#101010` | primary text, ink for dither |
+| `--fg-2` | `#c8c8c8` | `#3a3a3a` | secondary values |
+| `--muted` | `#999999` | `#666666` | labels, metas (>=4.5:1 on card) |
+| `--faint` | `#5c5c5c` | `#a0a0a0` | disabled, axis ticks only, never body text |
+| `--line` | `rgba(235,235,235,.15)` | `rgba(16,16,16,.24)` | box borders, table rules |
+| `--line-strong` | `rgba(235,235,235,.32)` | `rgba(16,16,16,.46)` | hovered border, inputs, buttons |
 | `--ink` | `var(--fg)` | `var(--fg)` | dither "on" pixels |
-| `--ink-track` | `rgba(255,247,240,.10)` | `rgba(24,23,21,.10)` | dither "off" pixels in tracks (optional) |
-| `--warn` | `#f0a04b` | `#b35f00` | near limit |
-| `--crit` | `#f0605a` | `#c0261f` | at limit / down / failed |
+| `--warn` | `#f0a04b` | `#b86200` | near limit |
+| `--crit` | `#f0605a` | `#c42b25` | at limit / down / failed |
 | `--focus` | `var(--fg)` | `var(--fg)` | focus ring |
 
 Theme selection: `:root` carries the dark values. Use `@media (prefers-color-scheme: light) { :root:not([data-theme="dark"]) {…light} }`
@@ -342,6 +342,24 @@ Fixed levels used across the system (named constants in `lib/dither.ts`):
 | `AREA` | 8 | area under a line, normal bars |
 | `FILL` | 12 | meter fill |
 | `SOLID` | 16 | line tops, "up" cells, the edge of a meter |
+
+#### Legibility: density plus an ink ramp, five steps for squares
+
+Two neighbouring Bayer levels (say 6 and 8) are nearly impossible to tell apart, so density never encodes a
+value on its own:
+
+- **Ink ramp.** Every pattern's on-pixels get an opacity that rises with the level (`inkAlpha` in
+  `lib/dither.ts`: about 38 % at level 1, 69 % at 8, 83 % at 12, 100 % solid). Sparse reads as light *and*
+  thin, dense as dark *and* full. It lives in `DitherDefs`, so every chart, meter and square gets it in both
+  themes with no per-component work.
+- **Five steps for value squares.** Heat squares, space squares and day maps quantise to `HEAT_STEPS`
+  (`TRACK, 4, 8, 12, SOLID`): none, up to 1/4, up to 1/2, up to 3/4, above. `densityLevel` does this.
+- **A legend wherever levels encode values.** `HeatMatrix` takes `format` and prints `<HeatScale>`
+  (`0 ▫▫▫▫▪ $12+`), each square titled with its exact range.
+- **Exact values on hover.** Every square and bar has a tooltip or `title` with the real number; the ramp is
+  for scanning, the tooltip is for reading.
+- Overlays drawn inside a bar (blocked over queries) use `FILL`, never a lower level: Bayer pixels nest, so a
+  lighter level inside a denser bar disappears.
 
 ### 2.8 Component inventory
 

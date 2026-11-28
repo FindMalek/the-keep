@@ -24,13 +24,28 @@ export function level(value: number): number {
 }
 
 /**
- * For squares whose density is the value (heat, space, day maps): zero is the TRACK texture, and any non-zero value
- * starts one step above it so "a little" never looks emptier than "nothing". Above that it is the plain 0..16 scale,
- * so 14% and 24% stay two levels apart.
+ * Squares whose density is the value (heat, space, day maps) use five steps, not 17: neighbouring Bayer levels are
+ * too alike to tell apart. Step 0 is the empty TRACK texture; any non-zero value is at least step 1.
  */
+export const HEAT_STEPS = [TRACK, 4, 8, 12, SOLID] as const;
+
+/** 0..1 → step 0..4. */
+export function heatStep(value: number): number {
+  if (!(value > 0)) return 0;
+  return Math.min(4, Math.max(1, Math.ceil(value * 4 - 1e-9)));
+}
+
 export function densityLevel(value: number): number {
-  if (!(value > 0)) return TRACK;
-  return Math.max(TRACK + 1, level(value));
+  return HEAT_STEPS[heatStep(value)]!;
+}
+
+/**
+ * Ink opacity per level, so sparse levels are also lighter: density alone was hard to read between close levels.
+ * A track stays faint, a fill stays strong, solid is full ink.
+ */
+export function inkAlpha(lvl: number): number {
+  if (lvl >= SOLID) return 1;
+  return Math.round((0.38 + (0.62 * Math.max(0, lvl - 1)) / 14) * 100) / 100;
 }
 
 /** The on-pixels of one 4×4 tile at a level, as [x, y]. */

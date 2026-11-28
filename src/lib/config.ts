@@ -36,7 +36,9 @@ export interface Config {
   /** argv prefix for journalctl, and the host journal mounted into the container (empty reads the local one). */
   journalctl: string[];
   journalDir: string | null;
-  garageS3: { url: string; key: string; secret: string; region: string } | null;
+  garageS3: { url: string; key: string; secret: string; region: string; writeKey: { key: string; secret: string } | null } | null;
+  /** Buckets the bucket browser may delete in; empty turns deletes off. */
+  garageDeleteBuckets: string[];
 }
 
 function pairs(raw: string | undefined): [string, string][] {
@@ -87,7 +89,15 @@ export function loadConfig(): Config {
     journalDir: process.env.JOURNAL_DIR === undefined ? "/host/journal" : process.env.JOURNAL_DIR || null,
     garageS3:
       process.env.GARAGE_S3_URL && process.env.GARAGE_S3_KEY && process.env.GARAGE_S3_SECRET
-        ? { url: process.env.GARAGE_S3_URL, key: process.env.GARAGE_S3_KEY, secret: process.env.GARAGE_S3_SECRET, region: process.env.GARAGE_S3_REGION ?? "garage" }
+        ? {
+            url: process.env.GARAGE_S3_URL,
+            key: process.env.GARAGE_S3_KEY,
+            secret: process.env.GARAGE_S3_SECRET,
+            region: process.env.GARAGE_S3_REGION ?? "garage",
+            writeKey:
+              process.env.GARAGE_S3_RW_KEY && process.env.GARAGE_S3_RW_SECRET ? { key: process.env.GARAGE_S3_RW_KEY, secret: process.env.GARAGE_S3_RW_SECRET } : null,
+          }
         : null,
+    garageDeleteBuckets: (process.env.GARAGE_S3_DELETE_BUCKETS ?? "").split(",").map((name) => name.trim()).filter(Boolean),
   };
 }

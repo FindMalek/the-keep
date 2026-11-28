@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import type { ModelPrice, SessionFacets, SessionListRow, SessionsPayload, UsageDay } from "../../shared/types";
-import type { ParsedSession } from "../../sessions/types";
+import type { SessionMessage, SessionPage } from "../../sessions/types";
 
 const REFRESH_MS = 60_000;
 const PAGE = 50;
@@ -90,21 +90,77 @@ export function usePrices(): { updatedAt: number | null; models: { model: string
   return prices;
 }
 
-export type SessionDetail = ParsedSession & { costs: (number | null)[] };
+const MESSAGE_PAGE = 40;
 
-export function useSession(id: string | null): SessionDetail | null | "missing" {
-  const [data, setData] = useState<SessionDetail | null | "missing">(null);
+export interface Transcript {
+  /** The first page: session, parent and the whole conversation's summary. */
+  head: SessionPage | null | "missing";
+  messages: SessionMessage[];
+  costs: (number | null)[];
+  total: number;
+  loading: boolean;
+  more: () => void;
+  /** Loads pages until `seq` is in, so a jump can scroll to it. */
+  through: (seq: number) => Promise<void>;
+}
+
+/** A conversation's messages, a page at a time; `more` is called by the scroll sentinel. */
+export function useTranscript(id: string | null): Transcript {
+  const [head, setHead] = useState<SessionPage | null | "missing">(null);
+  const [messages, setMessages] = useState<SessionMessage[]>([]);
+  const [costs, setCosts] = useState<(number | null)[]>([]);
+  const [loading, setLoading] = useState(false);
+  const state = useRef({ id, loaded: 0, total: Infinity, busy: null as Promise<void> | null });
+
+  const fetchNext = useCallback((): Promise<void> => {
+    const current = state.current;
+    if (current.busy) return current.busy;
+    if (!current.id || current.loaded >= current.total) return Promise.resolve();
+    const mine = current.id;
+    setLoading(true);
+    current.busy = fetch(`/api/session?id=${encodeURIComponent(mine)}&offset=${current.loaded}&limit=${MESSAGE_PAGE}`)
+      .then(async (response) => {
+        if (state.current.id !== mine) return;
+        if (!response.ok) {
+          if (!current.loaded) setHead("missing");
+          current.total = current.loaded;
+          return;
+        }
+        const page = (await response.json()) as SessionPage;
+        if (state.current.id !== mine) return;
+        if (page.offset === 0) setHead(page);
+        current.loaded = page.offset + page.messages.length;
+        current.total = page.total;
+        setMessages((list) => [...list, ...page.messages]);
+        setCosts((list) => [...list, ...page.costs]);
+      })
+      .catch(() => {
+        if (!current.loaded && state.current.id === mine) setHead("missing");
+      })
+      .finally(() => {
+        current.busy = null;
+        if (state.current.id === mine) setLoading(false);
+      });
+    return current.busy;
+  }, []);
+
   useEffect(() => {
-    setData(null);
-    if (!id) return;
-    let cancelled = false;
-    fetch(`/api/session?id=${encodeURIComponent(id)}`)
-      .then((response) => (response.ok ? response.json() : "missing"))
-      .then((json) => !cancelled && setData(json as SessionDetail | "missing"))
-      .catch(() => !cancelled && setData("missing"));
-    return () => {
-      cancelled = true;
-    };
-  }, [id]);
-  return data;
+    state.current = { id, loaded: 0, total: Infinity, busy: null };
+    setHead(null);
+    setMessages([]);
+    setCosts([]);
+    void fetchNext();
+  }, [id, fetchNext]);
+
+  const through = useCallback(
+    async (seq: number) => {
+      // Messages are numbered 0..n-1, so seq is also the index to reach.
+      while (state.current.loaded <= seq && state.current.loaded < state.current.total) await fetchNext();
+    },
+    [fetchNext],
+  );
+
+  const more = useCallback(() => void fetchNext(), [fetchNext]);
+  const total = head && head !== "missing" ? head.total : 0;
+  return { head, messages, costs, total, loading, more, through };
 }

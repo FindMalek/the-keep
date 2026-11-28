@@ -13,8 +13,12 @@ function userText(content: unknown): string {
     .join("\n");
 }
 
-/** Parses one Claude Code session file (JSONL). Streaming splits one API reply into several lines sharing `message.id`; they are merged. */
-export function parseClaudeSession(jsonl: string, machine: string): ParsedSession | null {
+/**
+ * Parses one Claude Code session file (JSONL). Streaming splits one API reply into several lines sharing `message.id`; they are merged.
+ * `sidechain` is for a subagent file (`<project>/<session>/subagents/agent-<id>.jsonl`): every line is a sidechain line
+ * and its `sessionId` is the parent conversation's.
+ */
+export function parseClaudeSession(jsonl: string, machine: string, sidechain = false): ParsedSession | null {
   const lines: Json[] = [];
   for (const raw of jsonl.split("\n")) {
     if (!raw.trim()) continue;
@@ -25,7 +29,9 @@ export function parseClaudeSession(jsonl: string, machine: string): ParsedSessio
     }
   }
 
-  const nativeId = lines.find((l) => typeof l.sessionId === "string")?.sessionId as string | undefined;
+  const sessionId = lines.find((l) => typeof l.sessionId === "string")?.sessionId as string | undefined;
+  const agentId = lines.find((l) => typeof l.agentId === "string")?.agentId as string | undefined;
+  const nativeId = sidechain ? (agentId ? `agent:${agentId}` : undefined) : sessionId;
   if (!nativeId) return null;
 
   const messages: SessionMessage[] = [];
@@ -43,7 +49,7 @@ export function parseClaudeSession(jsonl: string, machine: string): ParsedSessio
     if (l.type === "cost-state" && typeof l.startTime === "number") costRuns.set(l.startTime, l);
 
     const at = Date.parse(l.timestamp ?? "") || 0;
-    if (l.isSidechain) continue;
+    if (l.isSidechain && !sidechain) continue;
 
     if (l.type === "user" && l.message) {
       const content = l.message.content;
@@ -122,6 +128,7 @@ export function parseClaudeSession(jsonl: string, machine: string): ParsedSessio
       endedAt: Math.max(...stamps),
       costUsd: costRuns.size ? costUsd : null,
       models: [...models.values()],
+      ...(sidechain && sessionId ? { parentId: `claude-code:${machine}:${sessionId}` } : {}),
     },
     messages,
   };

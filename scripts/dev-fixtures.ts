@@ -63,6 +63,26 @@ const buckets: BucketSource = {
       next: files.length > limit ? (page.at(-1)?.key ?? null) : null,
     };
   },
+  async *walk(bucket, prefix) {
+    const root = join(bucketRoot, bucket);
+    const files: { key: string; size: number; modified: number; etag: null }[] = [];
+    const visit = (dir: string) => {
+      if (!existsSync(dir)) return;
+      for (const name of readdirSync(dir).sort()) {
+        const path = join(dir, name);
+        const stat = statSync(path);
+        if (stat.isDirectory()) visit(path);
+        else files.push({ key: relative(root, path), size: stat.size, modified: stat.mtimeMs, etag: null });
+      }
+    };
+    visit(root);
+    const matching = files.filter((file) => file.key.startsWith(prefix));
+    for (let index = 0; index < matching.length; index += 1000) yield matching.slice(index, index + 1000);
+  },
+  // Pretends: fixtures are never changed, so a delete can be tried over and over.
+  async remove(_bucket, keys) {
+    return { deleted: keys.length, failed: [] };
+  },
   async get(bucket, key, range) {
     const path = join(bucketRoot, bucket, key);
     if (!path.startsWith(join(bucketRoot, bucket)) || !existsSync(path)) return null;
@@ -86,6 +106,8 @@ const server = Bun.serve({
       jobNames: () => initial.snapshot.jobs.jobs.map((job) => job.name),
       buckets: () => buckets,
       bucketNames: () => initial.snapshot.garage.buckets.map((bucket) => bucket.name),
+      deleteBuckets: () => (process.env.GARAGE_S3_DELETE_BUCKETS ?? "").split(",").filter(Boolean),
+      logBucketDelete: (record) => console.log("bucket delete", record.detail),
     }),
     "/api/snapshot": () => Response.json({ ...initial, snapshot: snapshotAt() } satisfies InitialPayload),
     "/api/activity": () => Response.json(activity),
