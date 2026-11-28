@@ -109,6 +109,14 @@ it). The reference setup is Dokploy + Traefik with a Tailscale-only route.
    `NTFY_TOPIC`); a failed run also emails you. Never pin `*.findmalek.engineer` to the LAN IP in a browser or hosts
    file: it works at home and breaks every site everywhere else.
 
+   n8n on the jobs page (workflow list, node graph, recent runs; read from n8n's database, no API key):
+   ```sh
+   install -m 755 host/keep-n8n-status.py /usr/local/bin/keep-n8n-status     # every 5 min, n8n-status.json
+   install -m 755 host/keep-n8n-actions.py /usr/local/bin/keep-n8n-actions   # run button, allow-listed workflows only
+   systemctl enable --now keep-n8n-status.timer keep-n8n-actions.path
+   ```
+   Allowed workflows live in `/etc/keep-dashboard-n8n-actions.json`; "run now" means dispatched, not finished.
+
    Telegram bot and outside heartbeat (ntfy stays as the loud channel):
    ```sh
    install -d -m 700 /etc/keep   # bot.env: TELEGRAM_TOKEN TELEGRAM_CHAT TELEGRAM_OWNER BOT_PIN GROQ_API_KEY HC_PING_KEY TZ DDNS_HOST

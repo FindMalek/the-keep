@@ -26,6 +26,8 @@ import { createKumaCollector } from "./collectors/kuma";
 import { createHomeCollector } from "./collectors/home";
 import { ViewerLog } from "./lib/viewers";
 import { readText } from "./lib/host";
+import { collectN8n, requestN8nRun } from "./collectors/n8n";
+import { collectBackrest } from "./collectors/backrest";
 import { gated } from "./lib/gate";
 import type {
   ActionRecord,
@@ -244,6 +246,25 @@ const server = Bun.serve({
         return new Response(null, { status: 202 });
       },
     },
+    "/api/n8n": async () => {
+      const stats = await collectN8n(process.env.N8N_URL ?? null, config.dataDir);
+      // keep-n8n-actions records what the run button dispatched
+      const history = JSON.parse((await readText(`${config.dataDir}/n8n-action-history.json`)) ?? "[]");
+      const actions = (Array.isArray(history) ? history : [])
+        .slice(0, 50)
+        .filter((item) => item && typeof item.status === "string" && typeof item.at === "string")
+        .map((item) => ({ workflowId: typeof item.workflowId === "string" ? item.workflowId : null, status: item.status as string, at: item.at as string }));
+      return Response.json({ ...stats, actions });
+    },
+    "/api/n8n/run": {
+      POST: async (request: Request) => {
+        if (request.headers.get("x-keep-action") !== "1") return new Response("missing header", { status: 403 });
+        const body = (await request.json().catch(() => null)) as { action?: unknown } | null;
+        if (typeof body?.action !== "string" || !(await requestN8nRun(config.dataDir, body.action))) return new Response("workflow not enabled", { status: 400 });
+        return new Response(null, { status: 202 });
+      },
+    },
+    "/api/backrest": async () => Response.json(await collectBackrest(process.env.BACKREST_URL ?? null, config.dataDir)),
     "/api/healthchecks": async () => {
       // written by host/keep-bot.py from the healthchecks.io API
       const file = Bun.file(`${config.dataDir}/healthchecks.json`);

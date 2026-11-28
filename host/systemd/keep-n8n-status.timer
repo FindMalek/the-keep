@@ -1,0 +1,9 @@
+[Unit]
+Description=Refresh n8n workflow metadata
+
+[Timer]
+OnBootSec=30s
+OnUnitActiveSec=60s
+
+[Install]
+WantedBy=timers.target

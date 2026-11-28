@@ -1,0 +1,9 @@
+[Unit]
+Description=Collect n8n workflow metadata for the dashboard
+RequiresMountsFor=/srv
+After=docker.service
+
+[Service]
+Type=oneshot
+EnvironmentFile=/etc/keep-dashboard-n8n.env
+ExecStart=/usr/local/bin/keep-n8n-status

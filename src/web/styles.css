@@ -4102,3 +4102,60 @@ button.object-delete:focus-visible {
     height: 40px;
   }
 }
+
+/* n8n workflow graph (jobs page) */
+.row-button {
+  width: 100%;
+  padding: 2px 0;
+  border: 0;
+  background: none;
+  color: inherit;
+  font: inherit;
+  text-align: left;
+  cursor: pointer;
+}
+
+.row-button:hover > :first-child,
+.row-button.is-current > :first-child {
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+
+.flow-scroll {
+  overflow: auto;
+  border: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.flow {
+  position: relative;
+}
+
+.flow svg {
+  position: absolute;
+  inset: 0;
+}
+
+.flow path {
+  fill: none;
+  stroke: var(--line-strong);
+  stroke-width: 1;
+}
+
+.flow-node {
+  position: absolute;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  gap: 2px;
+  padding: 0 var(--s-2);
+  border: 1px solid var(--line-strong);
+  background: var(--card);
+  font-size: 11px;
+  min-width: 0;
+}
+
+.flow-node.is-off {
+  border-style: dashed;
+  color: var(--faint);
+}

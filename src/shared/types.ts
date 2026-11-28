@@ -276,6 +276,30 @@ export interface AiUsageEntry {
   at: string;
 }
 
+export interface N8nStats {
+  status: "not configured" | "unreachable" | "connected";
+  truncated: boolean;
+  executionsAvailable: boolean;
+  workflows: {
+    id: string;
+    name: string;
+    active: boolean;
+    runnable?: boolean;
+    nodes: { name: string; type: string; x: number; y: number; disabled: boolean }[];
+    edges: { from: string; to: string }[];
+  }[];
+  executions: { id: string; workflowId: string; status: string; mode: string; startedAt: string | null; stoppedAt: string | null }[];
+  actions?: { workflowId: string | null; status: string; at: string }[];
+}
+
+export interface BackrestStats {
+  status: "not configured" | "unreachable" | "connected";
+  source?: "host" | "api";
+  plans: { id: string; snapshots: number; protectedBytes: number | null; success: number | null; warning: number | null; failed: number | null; nextAt: number | null }[];
+  snapshotsAvailable: boolean;
+  snapshots: { id: string; plan: string; repo: string; at: number }[];
+}
+
 export interface JobsStats {
   updatedAt: string | null;
   jobs: JobStatus[];

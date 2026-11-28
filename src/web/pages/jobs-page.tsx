@@ -9,6 +9,8 @@ import { whoIs } from "../lib/devices";
 import { bytes, duration, humanSchedule } from "../lib/format";
 import { clock } from "../lib/time";
 import { useActivity } from "../lib/use-activity";
+import { BackupsPanel } from "../components/backrest-details";
+import { WorkflowsPanel } from "../components/workflows-panel";
 
 const HOWTO_KEY = "keep:jobs:howto";
 
@@ -339,6 +341,8 @@ export function JobsPage({ jobs }: { jobs: JobsStats }) {
             </>
           )}
         </Panel>
+        <WorkflowsPanel />
+        <BackupsPanel />
       </div>
     </>
   );
